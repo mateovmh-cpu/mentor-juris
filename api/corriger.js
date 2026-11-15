@@ -1,10 +1,11 @@
 module.exports = async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Méthode non autorisée" });
+  if (req.method !== "POST") return res.status(405).json({ error: "method" });
 
-  const { texte, type, code } = req.body || {};
-  if (code !== process.env.ACCESS_CODE) return res.status(401).json({ error: "Code d'accès invalide" });
-  if (typeof texte !== "string" || !texte.trim() || texte.length > 8000)
-    return res.status(400).json({ error: "Texte manquant ou trop long (8000 caractères max)" });
+  const { prompt, code } = req.body || {};
+  if (!process.env.ACCESS_CODE || code !== process.env.ACCESS_CODE)
+    return res.status(401).json({ error: "bad_code" });
+  if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 20000)
+    return res.status(400).json({ error: "prompt_too_large" });
 
   try {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -16,15 +17,20 @@ module.exports = async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5-5",
-        max_tokens: 1200,
-        system: "Tu es Marlowe, correcteur exigeant de droit français. Corrige l'exercice de l'étudiant : points forts, erreurs, note sur 20 justifiée. Ne cite jamais un arrêt ou un article dont tu n'es pas certain : écris « à vérifier ».",
-        messages: [{ role: "user", content: "Type d'exercice : " + (type || "non précisé") + "\n\n" + texte }]
+        max_tokens: 2500,
+        system: "Tu es l'assistant pédagogique d'une application pour étudiants en droit français. Suis exactement le format de réponse demandé. Ne cite jamais un arrêt ou un article dont tu n'es pas certain : écris « à vérifier ».",
+        messages: [{ role: "user", content: prompt }]
       })
     });
     const data = await r.json();
-    if (!r.ok) return res.status(502).json({ error: "Erreur du service de correction" });
-    return res.status(200).json({ correction: (data.content && data.content[0] && data.content[0].text) || "" });
+    if (!r.ok) {
+      console.error("Anthropic", r.status, JSON.stringify(data).slice(0, 300));
+      return res.status(r.status === 429 ? 429 : 502).json({ error: "upstream" });
+    }
+    const text = (data.content || []).map((b) => b.text || "").join("");
+    return res.status(200).json({ text });
   } catch (e) {
-    return res.status(500).json({ error: "Erreur serveur" });
+    console.error("Server", e && e.message);
+    return res.status(500).json({ error: "server" });
   }
 };
