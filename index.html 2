@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mentor Juris</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: slim top bar with discreet tab nav; Pilotage = mentor order on top, compact year tracker centred below. Apple-style system type, hairline borders. */
+  :root {
+    color-scheme: dark;
+    --ink: #0b0f15;        /* page ground */
+    --panel: #11161f;      /* surfaces */
+    --panel-2: #171e2a;    /* inputs, nested */
+    --line: rgba(255, 255, 255, .08);   /* hairlines */
+    --line-2: rgba(255, 255, 255, .16);
+    --text: #e4e1d9;
+    --muted: #7f8899;
+    --dim: #4f586a;
+    --red: #ff3b4e;        /* échéances : rouge vif */
+    --red-soft: rgba(255, 59, 78, .12);
+    --brass: #d2ad63;      /* aujourd'hui, sélection */
+    --brass-soft: rgba(210, 173, 99, .12);
+    --ok: #4fbf8b;
+    --exam: #06080b;       /* salle d'examen, plus sombre */
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: var(--font-body);
+    --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html, body { background: var(--ink); color: var(--text); }
+  body { font-family: var(--font-body); font-size: 14.5px; line-height: 1.55; font-weight: 400; letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .display { font-family: var(--font-display); font-weight: 500; letter-spacing: -0.02em; text-wrap: balance; }
+  .code { font-family: var(--font-code); font-size: 12.5px; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .eyebrow { font-family: var(--font-body); font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  textarea::placeholder, input::placeholder { color: var(--dim); }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--ink) 88%, transparent); backdrop-filter: blur(8px); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--ink); }
+  .navscroll { overflow-x: auto; scrollbar-width: none; }
+  .navscroll::-webkit-scrollbar { display: none; }
+  .sq { width: 7px; height: 7px; border-radius: 1.5px; flex: none; }
+  .caret::after { content: "▍"; color: var(--brass); margin-left: 2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .spin, .pulse, .caret::after { animation: none; } }
+  select { background-image: none; }
+  @media (min-resolution: 2dppx) {
+    .border { border-width: .5px !important; }
+    .border-b { border-bottom-width: .5px !important; }
+    .border-t { border-top-width: .5px !important; }
+    .border-y { border-top-width: .5px !important; border-bottom-width: .5px !important; }
+  }
+</style>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    ink: "var(--ink)", panel: "var(--panel)", panel2: "var(--panel-2)", line: "var(--line)", line2: "var(--line-2)",
+    txt: "var(--text)", muted: "var(--muted)", dim: "var(--dim)", red: "var(--red)", brass: "var(--brass)", ok: "var(--ok)"
+  } } } };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const { useState, useEffect, useRef, useMemo } = React;
+const html = htm.bind(React.createElement);
+
+const DAY = 86400000;
+const pad = (n) => String(n).padStart(2, "0");
+const toIso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fromIso = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const isoIn = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return toIso(d); };
+const TODAY = isoIn(0);
+const diffDays = (a, b) => Math.round((fromIso(b) - fromIso(a)) / DAY);
+const longDate = (s) => fromIso(s).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+const shortDate = (s) => fromIso(s).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+
+const store = {
+  get(k, f) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+const TYPES = {
+  partiel:  { label: "Partiel",  deadline: true },
+  td:       { label: "Rendu TD",  deadline: true },
+  revision: { label: "Révision",  deadline: false },
+  tache:    { label: "Tâche",    deadline: false },
+};
+const isDeadline = (it) => TYPES[it.type]?.deadline;
+
+function seedItems() {
+  const s = (d, title, type, matiere, done = false) => ({ id: uid(), date: isoIn(d), title, type, matiere, done, doneOn: done ? isoIn(d) : undefined });
+  return [
+    s(-4, "Fiche d'arrêt : Mercier (Civ. 20 mai 1936)", "revision", "Responsabilité civile", true),
+    s(-3, "Fiche d'arrêt : Perruche (Ass. plén. 2000)", "revision", "Responsabilité civile", true),
+    s(-2, "Relire CM séance 6 — vices du consentement", "revision", "Droit des contrats", true),
+    s(-1, "Relire les fiches de responsabilité civile", "revision", "Responsabilité civile", true),
+    s(-1, "Exercices TD 5 — clauses abusives", "tache", "Droit des contrats"),
+    s(0, "Ficher Chronopost + Faurecia", "revision", "Droit des contrats"),
+    s(0, "Relire CM séance 7", "revision", "Droit des contrats", true),
+    s(1, "Plan du commentaire Com. 29 juin 2010", "tache", "Droit des contrats"),
+    s(2, "Rédiger l'introduction du commentaire", "tache", "Droit des contrats"),
+    s(3, "Rendu TD — commentaire Com. 29 juin 2010", "td", "Droit des contrats"),
+    s(5, "Fiches : Blanco, Cadot, Terrier", "revision", "Droit administratif"),
+    s(7, "Cas pratique chronométré (3 h)", "revision", "Droit des contrats"),
+    s(10, "Rendu cas pratique — responsabilité administrative", "td", "Droit administratif"),
+    s(12, "Relecture de toutes les fiches contrats", "revision", "Droit des contrats"),
+    s(18, "Partiel — Droit des contrats", "partiel", "Droit des contrats"),
+    s(24, "Partiel — Droit administratif", "partiel", "Droit administratif"),
+  ];
+}
+
+const EXAMPLE_NOTES = `CM Droit des contrats — séance 7 (clauses limitatives)
+Arrêt Chronopost, Com. 22 oct. 1996
+- Sté Banchereau confie à Chronopost un pli (soumission à une adjudication), livraison promise avant midi le lendemain
+- livré en retard -> Banchereau écartée de l'adjudication
+- Banchereau assigne Chronopost en dommages-intérêts
+- CA Rennes 30 juin 1993 : applique la clause limitative (indemnisation limitée au prix du transport)
+- pourvoi de Banchereau
+- Cass. casse au visa art. 1131 anc. (cause) : Chronopost spécialiste du transport rapide, s'était engagée à livrer dans un délai déterminé -> la clause "contredisait la portée de l'engagement pris" => réputée non écrite
+prof : notion d'OBLIGATION ESSENTIELLE ++ / suite : Faurecia 2010 / auj. art. 1170 C. civ. (ord. 2016)
+TD : penser à distinguer manquement à l'obligation essentielle vs faute lourde`;
+
+const EXAMPLE_CAS = `M. Durand confie à la société TransExpress un dossier de candidature à un marché public, que celle-ci s'engage à livrer « avant 12 h le lendemain, garanti ». Le pli arrive à 15 h ; la candidature est rejetée. TransExpress oppose la clause de ses conditions générales limitant toute indemnisation au prix du transport (28 €). M. Durand vous consulte.`;
+
+const EXAMPLE_FICHE = {
+  example: true,
+  titre: "Cass. com., 22 octobre 1996, Chronopost",
+  faits: "La société Banchereau confie à la société Chronopost un pli contenant une soumission à une adjudication, que le transporteur s'engage à livrer avant midi le lendemain. Le pli arrive en retard et Banchereau ne peut concourir.",
+  procedure: "Banchereau assigne Chronopost en réparation. La cour d'appel de Rennes (30 juin 1993) applique la clause limitative de responsabilité et limite l'indemnisation au prix du transport. Banchereau forme un pourvoi.",
+  pretentions: "Le demandeur soutient que la clause ne peut jouer face à un manquement à l'engagement même de célérité ; le transporteur invoque la clause stipulée au contrat.",
+  probleme: "Une clause limitative de responsabilité peut-elle recevoir application lorsqu'elle vide de sa substance l'obligation essentielle du débiteur ?",
+  solution: "Cassation au visa de l'article 1131 ancien du Code civil. Spécialiste du transport rapide, Chronopost s'était engagée à livrer dans un délai déterminé ; la clause, qui contredit la portée de l'engagement pris, est réputée non écrite.",
+  portee: "Arrêt fondateur de la notion d'obligation essentielle, précisé par l'arrêt Faurecia (Com. 29 juin 2010) et consacré à l'article 1170 du Code civil par l'ordonnance du 10 février 2016.",
+  conseil: "Votre problème de droit doit être abstrait : ne citez ni Chronopost ni Banchereau."
+};
+
+const EXAMPLE_RESOLUTION = {
+  example: true,
+  titre: "Opposabilité d'une clause limitative en cas de retard de livraison",
+  problemes: [{
+    question: "La clause limitant l'indemnisation au prix du transport est-elle opposable à M. Durand ?",
+    majeure: "Selon l'article 1170 du Code civil, toute clause qui prive de sa substance l'obligation essentielle du débiteur est réputée non écrite (Com. 22 oct. 1996, Chronopost ; Com. 29 juin 2010, Faurecia).",
+    mineure: "TransExpress s'engageait sur un délai garanti, objet même du contrat. Limiter la réparation au prix du transport prive cet engagement de toute portée.",
+    conclusion: "La clause est réputée non écrite. M. Durand peut obtenir réparation selon le droit commun, dans la limite du dommage prévisible (art. 1231-3 C. civ.)."
+  }],
+  conseil: "Qualifiez la perte de chance avant de chiffrer le préjudice : c'est là que les copies perdent des points."
+};
+
+const MENTORS = {
+  marlowe: {
+    name: "Professeur Marlowe", short: "Marlowe", initial: "M", tone: "strict", pro: false,
+    tag: "Sévère · Harvard Law",
+    desc: "Ordres directs, aucune excuse acceptée. Pour ceux qui veulent être poussés.",
+    quote: "Une fiche non relue est une fiche perdue.",
+    prompt: "Tu es le Professeur Marlowe, mentor juridique exigeant formé à Harvard, qui coache un étudiant français en droit. Tu vouvoies, tu es direct et précis.",
+  },
+  vasseur: {
+    name: "Claire Vasseur", short: "Vasseur", initial: "C", tone: "neutral", pro: false,
+    tag: "Méthodique · Neutre",
+    desc: "Un cadre clair et un ton posé. Les priorités sont expliquées, sans pression.",
+    quote: "Une chose à la fois, dans le bon ordre.",
+    prompt: "Tu es Claire Vasseur, mentor juridique méthodique au ton posé et neutre, qui coache un étudiant français en droit. Tu vouvoies, tu expliques clairement.",
+  },
+  hartmann: {
+    name: "Juge Hartmann", short: "Hartmann", initial: "H", tone: "strict", pro: true,
+    tag: "Intransigeant · Ancien magistrat",
+    desc: "Interrogations surprises et corrections au barème le plus sévère. Pour viser la mention.",
+    quote: "La Cour ne lit pas les brouillons.",
+  },
+  delcourt: {
+    name: "Maître Delcourt", short: "Delcourt", initial: "D", tone: "strict", pro: true,
+    tag: "Stratège · Prépa CRFPA",
+    desc: "Plan de bataille sur six mois, notes de synthèse et grand oral.",
+    quote: "Le concours se gagne en novembre.",
+  },
+};
+let MENTOR = MENTORS.marlowe.prompt;
+let MENTOR_SHORT = MENTORS.marlowe.short;
+
+const ERRORS = {
+  not_granted: "L'accès à Claude n'a pas été autorisé pour cette page.",
+  sampling_disabled: "Claude n'est pas disponible pour ce compte.",
+  rate_limited: "Trop de demandes d'affilée. Patientez une minute puis relancez.",
+  session_expired: "Votre session a expiré. Reconnectez-vous à Claude puis relancez.",
+  refused: "Claude n'a pas pu traiter ce texte. Reformulez-le.",
+  invalid_json: "La réponse était mal formée. Relancez.",
+  prompt_too_large: "Texte trop long. Collez une séance à la fois.",
+};
+const NO_SAMPLE = "La génération fonctionne quand la page est ouverte dans Claude. Le résultat affiché est un exemple.";
+
+const errorText = (e) => e?.code === "no_sample" ? NO_SAMPLE : (ERRORS[e?.code] || "Échec de la génération. Relancez dans un instant.");
+
+const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+function mentorOrder(items, tone = "strict") {
+  const pending = items.filter((i) => !i.done && !isDeadline(i));
+  const overdue = pending.filter((i) => i.date < TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  const deadlines = items.filter((i) => isDeadline(i) && i.date >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  const next = deadlines[0];
+  const todayTasks = pending.filter((i) => i.date === TODAY);
+  const nextIn = next ? diffDays(TODAY, next.date) : null;
+  const strict = tone === "strict";
+
+  if (overdue.length) {
+    const o = overdue[0], late = diffDays(o.date, TODAY);
+    return { task: o,
+      order: strict ? `Terminez « ${o.title} » avant toute autre chose.` : `Commencez par « ${o.title} », qui est en retard.`,
+      why: strict
+        ? `En retard depuis ${plural(late, "jour")}.${next ? ` ${next.title} dans ${nextIn} jours : chaque retard se paie le jour J.` : ""}`
+        : `Prévue il y a ${plural(late, "jour")}. La rattraper maintenant allège le reste de la semaine.` };
+  }
+  if (todayTasks.length) {
+    const t = todayTasks.find((i) => next && i.matiere === next.matiere) || todayTasks[0];
+    const rest = todayTasks.length - 1;
+    return { task: t,
+      order: strict ? `Aujourd'hui : « ${t.title} ». Rien d'autre tant que ce n'est pas fait.` : `Priorité du jour : « ${t.title} ».`,
+      why: [next && `${next.title} dans ${plural(nextIn, "jour")}.`, rest > 0 && `Puis ${plural(rest, "autre tâche")} aujourd'hui.`].filter(Boolean).join(" ") };
+  }
+  if (next && nextIn <= 14) {
+    return { plan: true,
+      order: strict ? `Rien n'est prévu aujourd'hui et « ${next.title} » tombe dans ${nextIn} jours. Planifiez vos séances maintenant.`
+                    : `« ${next.title} » arrive dans ${nextIn} jours et rien n'est prévu aujourd'hui. Planifions quelques séances.`,
+      why: strict ? "Un jour sans plan est un jour perdu." : "Quelques séances courtes suffisent pour démarrer." };
+  }
+  return {
+    order: strict ? "Calendrier dégagé. Avancez une fiche d'arrêt aujourd'hui, même courte." : "Rien d'urgent aujourd'hui. Une fiche d'arrêt courte serait un bon usage de votre temps.",
+    why: next ? `Prochaine échéance : ${next.title}, dans ${nextIn} jours.` : "" };
+}
+
+function streakOf(items) {
+  const days = new Set(items.filter((i) => i.done && !isDeadline(i)).map((i) => i.doneOn || i.date));
+  const validatedToday = days.has(TODAY);
+  let n = 0, d = validatedToday ? 0 : -1;
+  while (days.has(isoIn(d))) { n++; d--; }
+  const week = Array.from({ length: 7 }, (_, i) => days.has(isoIn(i - 6)));
+  return { n, validatedToday, week };
+}
+
+function Spinner() {
+  return html`<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg>`;
+}
+
+function CopyButton({ text, targetRef }) {
+  const [state, setState] = useState("idle");
+  const onClick = async () => {
+    try { await navigator.clipboard.writeText(text); setState("done"); }
+    catch {
+      const el = targetRef.current;
+      if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+      setState("select");
+    }
+    setTimeout(() => setState("idle"), 2200);
+  };
+  return html`<button onClick=${onClick} disabled=${!text}
+    class="mono text-xs px-2.5 py-1.5 rounded-[10px] border border-line hover:border-line2 hover:text-txt text-muted disabled:opacity-40">
+    ${{ idle: "Copier", done: "✓ Copié", select: "Sélectionné · ⌘C" }[state]}</button>`;
+}
+
+function MentorNote({ text }) {
+  return html`<div class="rounded-xl p-4 border border-line bg-panel flex flex-col gap-1">
+    <div class="eyebrow">${MENTOR_SHORT}</div><p class="display text-[1.05rem]">${text}</p></div>`;
+}
+
+function PageHead({ cmd, title, sub }) {
+  return html`<div class="flex flex-col gap-1">
+    <h1 class="display text-2xl sm:text-[1.9rem] leading-tight">${title}</h1>
+    ${sub && html`<p class="text-muted max-w-[62ch]">${sub}</p>`}
+  </div>`;
+}
+
+function Avatar({ mentor, size = 28 }) {
+  return html`<span class="shrink-0 rounded-full grid place-items-center font-medium text-ink"
+    style=${{ width: size, height: size, fontSize: size * 0.42, background: mentor.pro ? "linear-gradient(135deg, #e9cf94, var(--brass))" : "var(--brass)" }}
+    aria-hidden="true">${mentor.initial}</span>`;
+}
+
+function StreakBadge({ streak, compact }) {
+  const hot = streak.n > 0;
+  if (compact) {
+    return html`<span class="mono text-xs inline-flex items-center gap-1 px-2 py-1 rounded-full border border-line whitespace-nowrap shrink-0 ${hot ? "text-txt" : "text-dim"}"
+      title=${`Série de révision : ${plural(streak.n, "jour")}`}>${hot ? "🔥" : "○"} ${streak.n} j</span>`;
+  }
+  return html`<div class="flex items-center gap-3">
+    <div class="hidden sm:flex gap-[3px]" aria-hidden="true">
+      ${streak.week.map((on, i) => html`<span key=${i} class="sq" style=${on ? { background: "var(--ok)" } : { background: "var(--panel-2)" }}></span>`)}
+    </div>
+    <div class="flex flex-col items-end leading-tight">
+      <span class="text-[13px] font-medium whitespace-nowrap">Série : ${plural(streak.n, "jour")} ${streak.n > 0 ? "🔥" : ""}</span>
+      <span class="text-[11px] whitespace-nowrap ${streak.validatedToday ? "text-ok" : "text-brass"}">
+        ${streak.validatedToday ? "Validée aujourd'hui" : "Validez une tâche pour la garder"}</span>
+    </div>
+  </div>`;
+}
+
+function MentorMessage({ items, mentor, streak, onDone, onPlan, onGo, planning }) {
+  const m = mentorOrder(items, mentor.tone);
+  const [read, setRead] = useState(false);
+  return html`<section aria-labelledby="msg-h" class="rounded-2xl border border-line bg-panel">
+    <div class="flex items-center justify-between gap-3 px-5 sm:px-6 py-2.5 border-b border-line">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <${Avatar} mentor=${mentor} />
+        <div class="flex flex-col min-w-0 leading-tight">
+          <span id="msg-h" class="text-[13px] font-medium truncate">${mentor.name}</span>
+          <span class="text-[11px] text-muted inline-flex items-center gap-1.5">
+            ${!read && html`<span class="sq" style=${{ background: "var(--red)", borderRadius: "50%", width: 6, height: 6 }} aria-hidden="true"></span>`}
+            ${read ? "Message lu" : "Nouveau message"} · 07:30</span>
+        </div>
+      </div>
+      <${StreakBadge} streak=${streak} />
+    </div>
+    <div class="px-5 sm:px-6 py-4 flex flex-col gap-2.5">
+      <p class="display text-[1.15rem] sm:text-[1.3rem] leading-snug">${m.order}</p>
+      ${m.why && html`<p class="text-muted text-sm max-w-[70ch]">${m.why}</p>`}
+      <div class="flex flex-wrap gap-2">
+        ${m.task && m.task.go === "cours" && html`<button id="msg-go" onClick=${() => onGo && onGo()}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Aller à Mes cours →</button>`}
+        ${m.task && html`<button id="msg-done" onClick=${() => { onDone(m.task.id); setRead(true); }}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>✓ C'est fait</button>`}
+        ${m.plan && html`<button onClick=${onPlan} disabled=${planning}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 inline-flex items-center gap-2 disabled:opacity-60" style=${{ background: "var(--brass)" }}>
+          ${planning && html`<${Spinner} />`} Planifier mes révisions</button>`}
+        ${!read && html`<button onClick=${() => setRead(true)} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Compris</button>`}
+      </div>
+    </div>
+  </section>`;
+}
+
+function statusOf(it) {
+  if (it.done) return "done";
+  return it.date < TODAY ? "late" : "todo";
+}
+
+function dayState(list, iso) {
+  if (list.some(isDeadline)) return "deadline";
+  const tasks = list.filter((i) => !isDeadline(i));
+  if (tasks.some((t) => statusOf(t) === "late")) return "late";
+  if (tasks.length && tasks.every((t) => t.done)) return "done";
+  if (tasks.some((t) => t.done)) return "partial";
+  if (tasks.length && iso >= TODAY) return "todo";
+  return iso < TODAY ? "past" : "empty";
+}
+const CELL = {
+  deadline: { background: "var(--red)" },
+  late:     { background: "var(--red)" },
+  done:     { background: "var(--ok)" },
+  partial:  { background: "var(--ok)", opacity: .45 },
+  todo:     { background: "transparent", boxShadow: "inset 0 0 0 1px var(--muted)" },
+  empty:    { background: "var(--panel-2)" },
+  past:     { background: "var(--line)" },
+};
+const STATE_LABEL = { deadline: "échéance", late: "en retard", done: "validé", partial: "en cours", todo: "à faire", empty: "libre", past: "passé" };
+
+function Tracker({ items, selected, setSelected }) {
+  const byDate = useMemo(() => {
+    const m = {};
+    for (const it of items) (m[it.date] ||= []).push(it);
+    return m;
+  }, [items]);
+  const [hover, setHover] = useState(null);
+  const now = fromIso(TODAY);
+  const startY = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  const months = Array.from({ length: 12 }, (_, i) => new Date(startY, 8 + i, 1));
+  const focus = hover || selected;
+  const focusList = byDate[focus] || [];
+  const focusState = dayState(focusList, focus);
+  const summary = focusList.length
+    ? [focusList.find(isDeadline)?.title, `${focusList.filter((i) => !isDeadline(i)).length} tâche(s)`].filter(Boolean).join(" · ")
+    : "rien de prévu";
+
+  return html`<section aria-labelledby="trk-h" class="rounded-2xl border border-line bg-panel px-5 sm:px-7 py-4 flex flex-col gap-3.5">
+    <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+      <h2 id="trk-h" class="eyebrow">Année ${startY}–${startY + 1}</h2>
+      <div class="flex flex-wrap gap-x-3 gap-y-1 mono text-[10.5px] text-muted">
+        ${[["deadline", "échéance / retard"], ["done", "validé"], ["todo", "à faire"], ["empty", "libre"]].map(([k, l]) => html`<span key=${k} class="inline-flex items-center gap-1.5">
+          <span class="sq" style=${CELL[k]}></span>${l}</span>`)}
+      </div>
+    </div>
+    <div class="flex flex-wrap justify-center gap-x-5 gap-y-3" role="grid" aria-label="Tracker annuel">
+      ${months.map((first) => {
+        const y = first.getFullYear(), m = first.getMonth();
+        const offset = (first.getDay() + 6) % 7;
+        const daysIn = new Date(y, m + 1, 0).getDate();
+        const isCurrent = y === now.getFullYear() && m === now.getMonth();
+        return html`<div key=${m} class="flex flex-col gap-1.5" role="row">
+          <span class="mono text-[10.5px] leading-none tracking-wide ${isCurrent ? "text-brass font-medium" : "text-muted"}">${first.toLocaleDateString("fr-FR", { month: "short" }).replace(".", "")}</span>
+          <div class="grid grid-cols-7 gap-[2px]">
+            ${Array.from({ length: offset }, (_, i) => html`<span key=${"o" + i} class="w-[9px] h-[9px]"></span>`)}
+            ${Array.from({ length: daysIn }, (_, i) => {
+              const iso = toIso(new Date(y, m, i + 1));
+              const st = dayState(byDate[iso] || [], iso);
+              const rings = [];
+              if (iso === TODAY) rings.push("0 0 0 1.5px var(--brass)");
+              if (iso === selected && iso !== TODAY) rings.push("0 0 0 1.5px var(--text)");
+              const style = { ...CELL[st], ...(rings.length ? { boxShadow: [CELL[st].boxShadow, ...rings].filter(Boolean).join(",") } : null) };
+              return html`<button key=${iso} role="gridcell" aria-selected=${iso === selected}
+                aria-label=${`${longDate(iso)} : ${STATE_LABEL[st]}`} title=${`${shortDate(iso)} · ${STATE_LABEL[st]}`}
+                onClick=${() => setSelected(iso)} onMouseEnter=${() => setHover(iso)} onMouseLeave=${() => setHover(null)}
+                class="w-[9px] h-[9px] rounded-[2px] hover:scale-150 transition-transform" style=${style}></button>`;
+            })}
+          </div>
+        </div>`;
+      })}
+    </div>
+    <div class="mono text-[11px] text-muted text-center truncate">
+      <span class="text-dim">›</span> <span class="capitalize ${focusState === "deadline" || focusState === "late" ? "text-red" : "text-txt"}">${shortDate(focus)}</span> · ${summary}
+    </div>
+  </section>`;
+}
+
+function DayRail({ items, selected, onToggle, onAdd, onRemove }) {
+  const list = items.filter((i) => i.date === selected).sort((a, b) => (isDeadline(b) - isDeadline(a)));
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState("revision");
+  const upcoming = items.filter((i) => isDeadline(i) && i.date >= TODAY).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 4);
+  const submit = (e) => { e.preventDefault(); if (!title.trim()) return; onAdd({ title: title.trim(), type, date: selected }); setTitle(""); };
+  const rel = diffDays(TODAY, selected);
+
+  return html`<aside class="grid gap-4 md:grid-cols-2 items-start min-w-0">
+    <section class="rounded-2xl border border-line bg-panel" aria-labelledby="day-h">
+      <div class="px-4 py-3 border-b border-line flex items-baseline justify-between gap-2">
+        <h2 id="day-h" class="text-sm font-medium capitalize">${longDate(selected)}</h2>
+        <span class="mono text-xs text-dim">${rel === 0 ? "aujourd'hui" : rel > 0 ? `J+${rel}` : `J${rel}`}</span>
+      </div>
+      <ul class="flex flex-col">
+        ${list.length === 0 && html`<li class="px-4 py-4 text-sm text-dim mono">Rien de prévu</li>`}
+        ${list.map((it) => {
+          const st = statusOf(it), dl = isDeadline(it);
+          return html`<li key=${it.id} class="group flex items-start gap-3 px-4 py-2.5 border-b border-line last:border-b-0">
+            ${dl ? html`<span class="mt-1 sq" style=${{ background: "var(--red)", width: 10, height: 10 }} aria-hidden="true"></span>`
+              : html`<button onClick=${() => onToggle(it.id)} aria-label=${it.done ? "Marquer à faire" : "Marquer comme fait"}
+                  class="mt-0.5 h-4 w-4 shrink-0 rounded-[3px] grid place-items-center text-[10px] text-ink"
+                  style=${it.done ? { background: "var(--ok)" } : { border: `1.5px solid ${st === "late" ? "var(--red)" : "var(--muted)"}` }}>${it.done ? "✓" : ""}</button>`}
+            <div class="min-w-0 flex-1">
+              <div class="text-sm ${it.done ? "line-through text-dim" : dl ? "text-red font-medium" : ""}">${it.title}</div>
+              <div class="mono text-[11px] text-dim">${TYPES[it.type].label.toLowerCase()} · ${it.matiere || "—"}${st === "late" ? html` · <span class="text-red">en retard</span>` : ""}</div>
+            </div>
+            <button onClick=${() => onRemove(it.id)} aria-label="Supprimer" class="mono text-xs text-dim hover:text-red opacity-60 group-hover:opacity-100">×</button>
+          </li>`;
+        })}
+      </ul>
+      <form onSubmit=${submit} class="flex gap-2 p-3 border-t border-line">
+        <label class="sr-only" htmlFor="add-title">Nouvel élément</label>
+        <input id="add-title" value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="Ajouter…"
+          class="flex-1 min-w-0 bg-panel2 border border-line rounded-[10px] px-2.5 py-1.5 text-sm outline-none focus:border-line2" />
+        <label class="sr-only" htmlFor="add-type">Type</label>
+        <select id="add-type" value=${type} onChange=${(e) => setType(e.target.value)}
+          class="bg-panel2 border border-line rounded-[10px] px-2 py-1.5 mono text-xs">
+          ${Object.entries(TYPES).map(([k, v]) => html`<option key=${k} value=${k}>${v.label}</option>`)}
+        </select>
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-line bg-panel" aria-labelledby="up-h">
+      <h2 id="up-h" class="px-4 py-3 border-b border-line eyebrow">Échéances</h2>
+      <ul>
+        ${upcoming.map((d) => {
+          const n = diffDays(TODAY, d.date);
+          return html`<li key=${d.id} class="flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0">
+            <span class="mono text-sm font-medium w-12 shrink-0 ${n <= 7 ? "text-red" : "text-txt"}">J−${n}</span>
+            <div class="min-w-0"><div class="text-sm truncate">${d.title}</div><div class="mono text-[11px] text-dim">${shortDate(d.date)}</div></div>
+          </li>`;
+        })}
+      </ul>
+    </section>
+  </aside>`;
+}
+
+function Pilotage({ items, setItems, sample, setPage, mentor, streak }) {
+  const [selected, setSelected] = useState(TODAY);
+  const [planning, setPlanning] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (id) => setItems((xs) => xs.map((i) => i.id === id ? { ...i, done: !i.done, doneOn: i.done ? undefined : TODAY } : i));
+  const done = (id) => setItems((xs) => xs.map((i) => i.id === id ? { ...i, done: true, doneOn: TODAY } : i));
+  const remove = (id) => setItems((xs) => xs.filter((i) => i.id !== id));
+  const add = (it) => setItems((xs) => [...xs, { id: uid(), done: false, matiere: "", ...it }]);
+
+  const plan = async () => {
+    setError(""); setPlanning(true);
+    try {
+      const deadlines = items.filter((i) => isDeadline(i) && i.date >= TODAY).map((i) => `${i.date} : ${i.title} (${i.matiere})`).join("\n");
+      const existing = items.filter((i) => !isDeadline(i) && i.date >= TODAY).map((i) => `${i.date} : ${i.title}`).join("\n") || "aucune";
+      const data = await askJson(sample, `${MENTOR}
+Aujourd'hui : ${TODAY}. Construis des séances de révision jusqu'aux échéances ci-dessous : répétition espacée, fiches d'arrêt, cas pratiques chronométrés, un examen blanc avant chaque partiel. Au plus 2 séances par jour, 12 au total, dates entre demain et la veille de chaque échéance, sans doublon avec les séances existantes.
+ÉCHÉANCES :
+${deadlines}
+SÉANCES EXISTANTES :
+${existing}
+Réponds uniquement avec un tableau JSON : [{"date":"YYYY-MM-DD","titre":"séance précise et actionnable (max 60 caractères)","matiere":"nom de la matière","type":"revision"}]`);
+      if (Array.isArray(data)) {
+        const added = data.map((d) => ({ id: uid(), date: d.date, title: d.titre, type: "revision", matiere: d.matiere || "Droit des contrats", done: false }));
+        setItems((xs) => [...xs, ...added]);
+      }
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  return html`<div class="flex flex-col gap-6">
+    <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${() => setPage("cours")} planning=${planning} />
+    ${error && html`<div class="rounded-xl p-4 border border-red/30 bg-red-soft text-red text-sm">${error}</div>`}
+    <${Tracker} items=${items} selected=${selected} setSelected=${setSelected} />
+    <${DayRail} items=${items} selected=${selected} onToggle=${toggle} onAdd=${add} onRemove=${remove} />
+  </div>`;
+}
+
+function FichesArrêt({ sample }) {
+  const [text, setText] = useState(EXAMPLE_NOTES);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [fiche, setFiche] = useState(EXAMPLE_FICHE);
+
+  const generate = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Analyse ce cours ou ces notes de jurisprudence et produis une fiche d'arrêt rigoureuse au format français (Faits, Procédure, Prétentions, Problème de droit, Solution, Portée, Conseil méthodologique).
+TEXTE :
+${text}
+Réponds uniquement en JSON valide avec ces clés exactes :
+{"titre":"string","faits":"string","procedure":"string","pretentions":"string","probleme":"string","solution":"string","portee":"string","conseil":"string"}`);
+      setFiche({ ...data, example: false });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Fiches d'arrêt" sub="Collez vos notes de cours ou un arrêt brut. Claude génère la fiche structurée selon les exigences des correcteurs de TD." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="notes-input">Notes de cours ou arrêt</label>
+        <textarea id="notes-input" rows="10" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none focus:border-line2 font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${generate} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Générer la fiche</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Fiche structurée</span>
+          <h2 class="display text-lg">${fiche.titre}</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          ${fiche.example && html`<span class="mono text-[10px] px-2 py-1 rounded bg-panel2 text-muted border border-line">Exemple</span>`}
+          <${CopyButton} text=${Object.entries(fiche).filter(([k]) => k !== "example" && k !== "titre").map(([k, v]) => `${k.toUpperCase()}\n${v}`).join("\n\n")} />
+        </div>
+      </div>
+      <div class="flex flex-col gap-4 text-sm leading-relaxed">
+        ${[["Faits", fiche.faits], ["Procédure", fiche.procedure], ["Prétentions", fiche.pretentions], ["Problème de droit", fiche.probleme], ["Solution", fiche.solution], ["Portée", fiche.portee], ["Conseil du mentor", fiche.conseil]].map(([k, v]) => html`
+          <div key=${k} class="flex flex-col gap-1">
+            <span class="eyebrow text-brass">${k}</span>
+            <p class=${k === "Conseil du mentor" ? "text-muted italic" : ""}>${v}</p>
+          </div>
+        `)}
+      </div>
+    </div>
+  </div>`;
+}
+
+function CasPratiques({ sample }) {
+  const [text, setText] = useState(EXAMPLE_CAS);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [res, setRes] = useState(EXAMPLE_RESOLUTION);
+
+  const resolve = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Résous ce cas pratique en droit français selon la méthode canonique (majeure, mineure, conclusion pour chaque problème de droit).
+CAS :
+${text}
+Réponds uniquement en JSON valide avec cette structure :
+{"titre":"string","problemes":[{"question":"string","majeure":"string","mineure":"string","conclusion":"string"}],"conseil":"string"}`);
+      setRes({ ...data, example: false });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Cas pratiques" sub="Soumettez un cas pratique ou un sujet de TD. Claude le résout selon le syllogisme juridique attendu en examen." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="cas-input">Énoncé du cas pratique</label>
+        <textarea id="cas-input" rows="8" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none focus:border-line2 font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${resolve} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Résoudre le cas</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Résolution méthodique</span>
+          <h2 class="display text-lg">${res.titre}</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          ${res.example && html`<span class="mono text-[10px] px-2 py-1 rounded bg-panel2 text-muted border border-line">Exemple</span>`}
+          <${CopyButton} text=${res.problemes.map((p, i) => `PROBLÈME ${i+1} : ${p.question}\nMajeure : ${p.majeure}\nMineure : ${p.mineure}\nConclusion : ${p.conclusion}`).join("\n\n")} />
+        </div>
+      </div>
+      <div class="flex flex-col gap-6 text-sm leading-relaxed">
+        ${res.problemes.map((p, i) => html`
+          <div key=${i} class="flex flex-col gap-3 pb-4 border-b border-line last:border-b-0">
+            <div class="eyebrow text-brass">Problème ${i + 1} — ${p.question}</div>
+            <div class="grid gap-2 pl-3 border-l border-brass/40">
+              <div><strong class="text-xs uppercase text-muted">Majeure :</strong> ${p.majeure}</div>
+              <div><strong class="text-xs uppercase text-muted">Mineure :</strong> ${p.mineure}</div>
+              <div><strong class="text-xs uppercase text-muted">Conclusion :</strong> ${p.conclusion}</div>
+            </div>
+          </div>
+        `)}
+        ${res.conseil && html`<div class="rounded-xl p-3 bg-panel2 border border-line text-xs text-muted">💡 ${res.conseil}</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function NotesCours({ sample }) {
+  const mats = (store.get("mj_profile", null) || {}).matieres || ["Droit des contrats", "Droit administratif", "Droit constitutionnel", "Responsabilité civile"];
+  const [matiere, setMatiere] = useState(mats[0]);
+  const [text, setText] = useState(() => ((getCours()[mats[0]] || {}).notes || "").slice(0, 15000) || EXAMPLE_NOTES);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [synthesis, setSynthesis] = useState(null);
+
+  const synthesize = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Synthétise ce cours de ${matiere} en dégageant les notions clés, les arrêts fondateurs à retenir absolument, et les pièges à éviter en examen.
+COURS :
+${text}
+Réponds uniquement en JSON valide :
+{"titre":"string","notions":["string"],"arrets":["string"],"pieges":["string"]}`);
+      setSynthesis(data);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Notes de cours" sub="Synthétisez vos notes de cours magistral pour en extraire l'essentiel à mémoriser." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="matiere-sel">Matière</label>
+        <select id="matiere-sel" value=${matiere} onChange=${(e) => { setMatiere(e.target.value); setText(((getCours()[e.target.value] || {}).notes || "").slice(0, 15000) || EXAMPLE_NOTES); }}
+          class="bg-panel2 border border-line rounded-xl px-3 py-2 text-sm outline-none">
+          ${mats.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+        </select>
+        <label class="eyebrow" htmlFor="notes-textarea">Notes brutes de CM</label>
+        <textarea id="notes-textarea" rows="8" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${synthesize} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Synthétiser</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Synthèse de révision · ${matiere}</span>
+          <h2 class="display text-lg">${synthesis?.titre || "Prêt à synthétiser"}</h2>
+        </div>
+        ${synthesis && html`<${CopyButton} text=${`NOTIONS:\n${synthesis.notions.join("\n")}\n\nARRÊTS:\n${synthesis.arrets.join("\n")}\n\nPIÈGES:\n${synthesis.pieges.join("\n")}`} />`}
+      </div>
+      ${!synthesis ? html`<p class="text-sm text-dim mono py-8 text-center">Lancez la synthèse pour afficher les notions clés.</p>`
+        : html`<div class="flex flex-col gap-5 text-sm leading-relaxed">
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-brass">Notions indispensables</span>
+              <ul class="list-disc pl-4 space-y-1">${synthesis.notions.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-brass">Arrêts fondateurs</span>
+              <ul class="list-disc pl-4 space-y-1">${synthesis.arrets.map((a, i) => html`<li key=${i} class="font-mono text-xs">${a}</li>`)}</ul>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-red">Pièges à éviter en examen</span>
+              <ul class="list-disc pl-4 space-y-1 text-red">${synthesis.pieges.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+            </div>
+          </div>`}
+    </div>
+  </div>`;
+}
+
+function CelluleEntrainement({ sample }) {
+  const [epreuve, setEpreuve] = useState("dissertation");
+  const [dureeMin, setDureeMin] = useState(180);
+  const [sujetType, setSujetType] = useState("contrats");
+  const [sujetCustom, setSujetCustom] = useState("");
+  const [locked, setLocked] = useState(true);
+
+  const [active, setActive] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(180 * 60);
+  const [copyText, setCopyText] = useState("");
+  const [exits, setExits] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const SUJETS = {
+    contrats: "La force obligatoire du contrat.",
+    administratif: "Le juge administratif et la loi.",
+    constitutionnel: "Le Conseil constitutionnel, juge des droits et libertés.",
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => {
+      setTimeLeft((s) => {
+        if (s <= 1) { clearInterval(t); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !locked) return;
+    const handleVis = () => { if (document.hidden) setExits((n) => n + 1); };
+    document.addEventListener("visibilitychange", handleVis);
+    return () => document.removeEventListener("visibilitychange", handleVis);
+  }, [active, locked]);
+
+  const startExam = () => {
+    setTimeLeft(dureeMin * 60);
+    setExits(0);
+    setCopyText("");
+    setResult(null);
+    setActive(true);
+  };
+
+  const submitExam = async () => {
+    setActive(false);
+    setSubmitting(true);
+    const sujet = sujetType === "libre" ? (sujetCustom || "Sujet libre") : SUJETS[sujetType];
+    const words = copyText.trim().split(/\s+/).filter(Boolean).length;
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Corrige cette copie d'examen de droit français (${epreuve}) sur le sujet : "${sujet}".
+COPIE :
+${copyText}
+STATISTIQUES : ${words} mots, ${exits} sorties de page détectées.
+Réponds uniquement en JSON valide :
+{"note":15.5,"appreciation":"string","points_forts":["string"],"points_a_corriger":["string"]}`);
+      setResult({ ...data, words, exits });
+    } catch (e) {
+      setActive(true);
+      window.alert(errorText(e) + " Votre copie est conservée : cliquez de nouveau sur « Rendre la copie ».");
+      return;
+      setResult({
+        note: 11.0,
+        appreciation: "Copie honorable mais la structure de l'introduction pèche par manque de précision sur la qualification juridique.",
+        points_forts: ["Bonne connaissance globale de la matière", "Style juridique correct"],
+        points_a_corriger: ["Problème de droit manquant de généralité", "Développement en deux parties trop déséquilibré"],
+        words,
+        exits
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fmtTime = (s) => `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  const sujetActif = sujetType === "libre" ? (sujetCustom || "Sujet libre à définir") : SUJETS[sujetType];
+
+  if (active) {
+    return html`<div class="fixed inset-0 z-50 flex flex-col bg-ink text-txt select-none" style=${{ background: "var(--exam)" }}>
+      <header class="flex items-center justify-between px-6 py-4 border-b border-line bg-panel">
+        <div class="flex items-center gap-4">
+          <span class="eyebrow text-red">● Session sous tension</span>
+          <span class="text-sm font-medium capitalize">${epreuve} · ${sujetActif}</span>
+        </div>
+        <div class="flex items-center gap-6">
+          <div class="mono text-lg font-medium text-brass">${fmtTime(timeLeft)}</div>
+          ${locked && exits > 0 && html`<span class="mono text-xs px-2.5 py-1 rounded bg-red-soft text-red">Avertissement : ${exits} sortie(s)</span>`}
+          <button onClick=${() => { if (confirm("Abandonner l'épreuve ? Votre copie sera notée comme inachevée.")) { setActive(false); } }}
+            class="mono text-xs px-3 py-1.5 rounded-lg border border-line text-muted hover:text-red">Abandonner</button>
+        </div>
+      </header>
+      <div class="flex-1 grid lg:grid-cols-[300px_1fr] overflow-hidden">
+        <aside class="hidden lg:flex flex-col gap-4 p-5 border-r border-line bg-panel overflow-y-auto text-xs text-muted">
+          <div class="eyebrow text-txt">Sujet de l'épreuve</div>
+          <p class="text-sm text-txt font-medium leading-relaxed">${sujetActif}</p>
+          <hr class="border-line" />
+          <div class="eyebrow text-txt">Règles de rigueur</div>
+          <p>• Intitulés apparents obligatoires (pas de points d'interrogation dans les titres).</p>
+          <p>• 15 minutes de relecture impératives avant de rendre la copie.</p>
+          <p>• Zéro tolérance pour les citations approximatives.</p>
+        </aside>
+        <main class="flex flex-col p-6 overflow-y-auto">
+          <textarea value=${copyText} onInput=${(e) => setCopyText(e.target.value)}
+            placeholder="Rédigez votre composition ici (introduction, I, II avec chapitres et transitions)…"
+            class="flex-1 w-full bg-transparent text-txt text-base leading-relaxed outline-none resize-none font-mono"></textarea>
+          <div class="flex items-center justify-between pt-4 border-t border-line mt-4">
+            <span class="mono text-xs text-dim">${copyText.trim().split(/\s+/).filter(Boolean).length} mots rédigés</span>
+            <button onClick=${submitExam}
+              class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Rendre la copie</button>
+          </div>
+        </main>
+      </div>
+    </div>`;
+  }
+
+  return html`<div class="grid gap-6 lg:grid-cols-[1fr_360px] items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Cellule d'entraînement" sub="Conditions réelles : sujet imposé, temps limité, aucune aide extérieure. Votre copie est corrigée à la fin par le mentor." />
+      ${submitting ? html`<div class="rounded-2xl border border-line bg-panel p-12 text-center flex flex-col items-center gap-3">
+        <${Spinner} />
+        <p class="text-sm text-muted">Correction de la copie selon le barème officiel…</p>
+      </div>` : result ? html`<div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+        <div class="flex items-center justify-between pb-4 border-b border-line">
+          <div><span class="eyebrow">Bilan de l'épreuve</span><h2 class="display text-2xl font-medium">Note : ${result.note} / 20</h2></div>
+          <span class="mono text-xs text-dim">${result.words} mots · ${result.exits} sorties</span>
+        </div>
+        <p class="text-sm leading-relaxed">${result.appreciation}</p>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="p-4 rounded-xl bg-panel2 border border-line flex flex-col gap-2">
+            <span class="eyebrow text-ok">Points forts</span>
+            <ul class="list-disc pl-4 text-xs space-y-1">${result.points_forts.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+          </div>
+          <div class="p-4 rounded-xl bg-panel2 border border-line flex flex-col gap-2">
+            <span class="eyebrow text-red">À corriger</span>
+            <ul class="list-disc pl-4 text-xs space-y-1 text-red">${result.points_a_corriger.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+          </div>
+        </div>
+        <button onClick=${() => setResult(null)} class="mono text-xs py-2 px-4 rounded-lg border border-line w-fit">Relancer une épreuve</button>
+      </div>` : html`<div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">1. Type d'épreuve</span>
+          <div class="grid grid-cols-3 gap-2">
+            ${[["dissertation", "Dissertation"], ["cas pratique", "Cas pratique"], ["commentaire", "Commentaire d'arrêt"]].map(([k, l]) => html`
+              <button key=${k} onClick=${() => setEpreuve(k)}
+                class=${`py-2.5 px-3 rounded-xl border text-xs font-medium text-left ${epreuve === k ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>${l}</button>
+            `)}
+          </div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">2. Durée</span>
+          <div class="grid grid-cols-3 gap-2">
+            ${[[60, "1 h"], [90, "1 h 30"], [180, "3 h"]].map(([m, l]) => html`
+              <button key=${m} onClick=${() => setDureeMin(m)}
+                class=${`py-2 px-3 rounded-xl border text-xs font-medium ${dureeMin === m ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>${l}</button>
+            `)}
+          </div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">3. Sujet</span>
+          <div class="flex flex-col gap-2">
+            ${Object.entries(SUJETS).map(([k, s]) => html`
+              <label key=${k} class=${`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${sujetType === k ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>
+                <input type="radio" name="sujet" checked=${sujetType === k} onChange=${() => setSujetType(k)} class="mt-0.5" />
+                <div class="flex flex-col"><span class="text-xs uppercase text-dim">${k}</span><span class="text-sm font-medium">${s}</span></div>
+              </label>
+            `)}
+            <label class=${`flex flex-col gap-2 p-3 rounded-xl border cursor-pointer ${sujetType === "libre" ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>
+              <div class="flex items-center gap-3">
+                <input type="radio" name="sujet" checked=${sujetType === "libre"} onChange=${() => setSujetType("libre")} />
+                <span class="text-xs font-medium uppercase">Sujet libre (collé)</span>
+              </div>
+              ${sujetType === "libre" && html`
+                <textarea value=${sujetCustom} onInput=${(e) => setSujetCustom(e.target.value)} placeholder="Collez votre sujet de TD ici…"
+                  rows="3" class="bg-panel2 border border-line rounded-lg p-2 text-sm outline-none font-mono"></textarea>
+              `}
+            </label>
+          </div>
+        </div>
+        <div class="flex items-center justify-between pt-4 border-t border-line">
+          <label class="flex items-center gap-2 cursor-pointer text-xs">
+            <input type="checkbox" checked=${locked} onChange=${(e) => setLocked(e.target.checked)} class="rounded" />
+            <span>Mode examen bloqué (comptage des sorties de page)</span>
+          </label>
+          <button onClick=${startExam}
+            class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Entrer en salle d'examen · ${dureeMin >= 60 ? `${dureeMin/60} h` : `${dureeMin} min`}</button>
+        </div>
+      </div>`}
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <${MentorNote} text="« La note en droit se gagne dans les vingt premières minutes : posez un plan irréprochable et un problème de droit chirurgical. »" />
+    </div>
+  </div>`;
+}
+
+function App() {
+  const [page, setPage] = useState("pilotage");
+  const [mentorKey, setMentorKey] = useState(() => store.get("mj_mentor", "marlowe"));
+  const [items, setItems] = useState(() => store.get("mj_items", seedItems()));
+  const [sample, setSample] = useState(null);
+  const [sampleState, setSampleState] = useState("checking");
+
+  const mentor = MENTORS[mentorKey];
+  MENTOR = mentor.prompt;
+  MENTOR_SHORT = mentor.short;
+
+  useEffect(() => { store.set("mj_items", items); }, [items]);
+  useEffect(() => {
+    store.set("mj_mentor", mentorKey);
+    MENTOR = MENTORS[mentorKey].prompt;
+    MENTOR_SHORT = MENTORS[mentorKey].short;
+  }, [mentorKey]);
+
+  useEffect(() => {
+    let active = true;
+    async function initClaude() {
+      if (window.ai?.languageModel) {
+        try {
+          const s = await window.ai.languageModel.create();
+          if (active) { setSample(s); setSampleState("ready"); return; }
+        } catch {}
+      }
+      if (active) setSampleState("unavailable");
+    }
+    initClaude();
+    return () => { active = false; };
+  }, []);
+
+  const streak = useMemo(() => streakOf(items), [items]);
+
+  const coursDot = !Object.values(getCours()).some((v) => v && v.digest);
+  const navs = [
+    { id: "pilotage", label: "1 Pilotage" },
+    { id: "fiches", label: "2 Fiches d'arrêt" },
+    { id: "cas", label: "3 Cas pratiques" },
+    { id: "notes", label: "4 Notes de cours" },
+    { id: "examen", label: "5 Cellule d'examen" },
+    { id: "cours", label: "6 Mes cours", dot: coursDot },
+  ];
+
+  return html`<div class="min-h-screen flex flex-col pb-16">
+    <header class="topbar border-b border-line px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-4 min-w-0">
+        <button onClick=${() => setPage("pilotage")} class="flex items-center gap-2.5 text-left group shrink-0">
+          <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+          <span class="display font-medium tracking-tight group-hover:opacity-80 whitespace-nowrap">Mentor Juris</span>
+        </button>
+        <nav class="hidden md:flex navscroll items-center gap-1 pl-4 border-l border-line" aria-label="Navigation principale">
+          ${navs.map((n) => html`
+            <button key=${n.id} onClick=${() => setPage(n.id)}
+              class=${`mono text-xs px-2 py-1.5 rounded-[10px] transition-colors whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted hover:text-txt"}`}>
+              ${n.label}${n.dot && html`<span class="inline-block w-1.5 h-1.5 rounded-full ml-1.5 pulse" style=${{ background: "var(--brass)" }} aria-label="À faire"></span>`}</button>
+          `)}
+        </nav>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <${StreakBadge} streak=${streak} compact=${true} />
+        <div class="relative">
+          <label class="sr-only" htmlFor="mentor-sel">Mentor</label>
+          <select id="mentor-sel" value=${mentorKey} onChange=${(e) => setMentorKey(e.target.value)}
+            class="bg-panel2 border border-line rounded-[10px] px-3 py-1.5 mono text-xs text-txt outline-none cursor-pointer">
+            ${Object.entries(MENTORS).map(([k, m]) => html`<option key=${k} value=${k}>${m.name}${m.pro ? " (Pro)" : ""}</option>`)}
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <div class="md:hidden navscroll flex items-center gap-1 px-4 py-2 bg-panel border-b border-line">
+      ${navs.map((n) => html`
+        <button key=${n.id} onClick=${() => setPage(n.id)}
+          class=${`mono text-xs px-3 py-1.5 rounded-[10px] whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted"}`}>
+          ${n.label}${n.dot && html`<span class="inline-block w-1.5 h-1.5 rounded-full ml-1.5 pulse" style=${{ background: "var(--brass)" }} aria-label="À faire"></span>`}</button>
+      `)}
+    </div>
+
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 flex flex-col gap-6">
+      ${page === "pilotage" && html`<${Pilotage} items=${items} setItems=${setItems} sample=${sample} setPage=${setPage} mentor=${mentor} streak=${streak} />`}
+      ${page === "fiches" && html`<${FichesArrêt} sample=${sample} />`}
+      ${page === "cas" && html`<${CasPratiques} sample=${sample} />`}
+      ${page === "notes" && html`<${NotesCours} sample=${sample} />`}
+      ${page === "examen" && html`<${CelluleEntrainement} sample=${sample} />`}
+      ${page === "cours" && html`<${MesCours} setItems=${setItems} />`}
+    </main>
+  </div>`;
+}
+
+async function askJson(sample, prompt, signal) {
+  let code = store.get("mj_code", "");
+  if (!code) {
+    code = (window.prompt("Code d'accès Mentor Juris :") || "").trim();
+    if (!code) throw { code: "bad_code" };
+    store.set("mj_code", code);
+  }
+  let r;
+  try {
+    r = await fetch("/api/corriger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, code }),
+      signal
+    });
+  } catch { throw { code: "network" }; }
+  if (r.status === 401) { store.set("mj_code", ""); throw { code: "bad_code" }; }
+  if (r.status === 400) throw { code: "prompt_too_large" };
+  if (r.status === 429) throw { code: "rate_limited" };
+  if (!r.ok) throw { code: "failed" };
+  const { text } = await r.json();
+  const s = (text || "").trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "");
+  try { return JSON.parse(s); } catch {}
+  const a = s.search(/[\[{]/), b = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch {} }
+  throw { code: "invalid_json" };
+}
+ERRORS.bad_code = "Code d'accès invalide. Relancez pour le saisir à nouveau.";
+ERRORS.network = "Connexion impossible. Vérifiez votre réseau puis relancez.";
+/* ===== Parcours d'accueil ===== */
+const MJ_FORM = "https://formspree.io/f/xeagaqaa";
+const NIVEAUX = ["L1", "L2", "L3", "M1", "M2", "Prépa CRFPA", "Autre"];
+const SUGGESTIONS = {
+  "L1": ["Introduction au droit", "Droit constitutionnel", "Droit civil : personnes et famille", "Histoire du droit", "Institutions juridictionnelles", "Institutions européennes"],
+  "L2": ["Droit des contrats", "Responsabilité civile", "Droit administratif", "Droit pénal général", "Droit des biens", "Droit de l'Union européenne"],
+  "L3": ["Droit des sûretés", "Procédure civile", "Droit des sociétés", "Droit du travail", "Droit pénal spécial", "Libertés fondamentales", "Droit international privé"],
+  "M1": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "M2": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "Prépa CRFPA": ["Note de synthèse", "Grand oral", "Procédure civile", "Procédure pénale", "Droit des obligations", "Libertés fondamentales", "Droit des sociétés"],
+  "Autre": []
+};
+const OBJECTIFS = ["Valider mes matières (10)", "Viser un 12", "Viser 14 ou plus"];
+const RYTHMES = ["1 h par jour", "2 h par jour", "3 h par jour ou plus"];
+const OINPUT = "w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-line2";
+const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
+
+/* ---- Cours par matière ---- */
+const COURS_CAP = 60000;
+const getCours = () => store.get("mj_cours", {});
+function saveCours(obj) {
+  try { localStorage.setItem("mj_cours", JSON.stringify(obj)); return true; } catch { return false; }
+}
+function chunkText(t, size = 12000) {
+  const out = [];
+  let i = 0;
+  while (i < t.length) {
+    let end = Math.min(i + size, t.length);
+    if (end < t.length) { const cut = t.lastIndexOf("\n", end); if (cut > i + size * 0.6) end = cut; }
+    out.push(t.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+async function analyzeCours(matiere, notes, onProgress) {
+  const chunks = chunkText(notes.slice(0, COURS_CAP));
+  const acc = { plan: [], notions: [], arrets: [] };
+  for (let i = 0; i < chunks.length; i++) {
+    if (onProgress) onProgress(i + 1, chunks.length);
+    const data = await askJson(null, `Voici ${chunks.length > 1 ? `la partie ${i + 1} sur ${chunks.length} des` : "les"} notes de cours d'un étudiant en droit, matière : ${matiere}. Extrais-en uniquement ce qui y figure, sans rien ajouter de ton cru.
+Réponds uniquement en JSON valide :
+{"plan":["intitulé de chapitre ou de partie (8 au maximum)"],"notions":["notion clé (8 au maximum)"],"arrets":["arrêt ou texte cité, avec sa date (8 au maximum)"]}
+NOTES :
+${chunks[i]}`);
+    for (const k of ["plan", "notions", "arrets"]) {
+      for (const v of (Array.isArray(data[k]) ? data[k] : [])) {
+        const s = clean(v, 120);
+        if (s && !acc[k].some((x) => x.toLowerCase() === s.toLowerCase())) acc[k].push(s);
+      }
+    }
+  }
+  for (const k of Object.keys(acc)) acc[k] = acc[k].slice(0, 14);
+  return acc;
+}
+function coursContext() {
+  const parts = [];
+  for (const [m, v] of Object.entries(getCours())) {
+    const d = v && v.digest;
+    if (!d) continue;
+    const L = (a) => (a || []).slice(0, 10).join(" ; ");
+    parts.push(`${m} — plan : ${L(d.plan)}. Notions : ${L(d.notions)}. Arrêts : ${L(d.arrets)}.`);
+  }
+  const s = parts.join(" | ").slice(0, 5000);
+  return s ? ` Éléments extraits des cours de l'étudiant (à utiliser quand c'est pertinent, sans en déduire autre chose) : ${s}` : "";
+}
+const refreshContext = () => {
+  const p = store.get("mj_profile", null);
+  if (p && Array.isArray(p.matieres)) applyProfileContext(p);
+};
+
+function OChip({ on, onClick, children }) {
+  return html`<button type="button" onClick=${onClick} aria-pressed=${on}
+    class=${`px-3 py-1.5 rounded-full border text-xs text-left ${on ? "text-txt" : "text-muted border-line"}`}
+    style=${on ? { background: "var(--brass-soft)", borderColor: "var(--brass)" } : {}}>${children}</button>`;
+}
+
+function applyProfileContext(p) {
+  const ctx = ` Contexte de l'étudiant : prénom ${p.prenom}, niveau ${p.niveau}, matières : ${p.matieres.join(", ")}. Objectif : ${p.objectif}. Rythme de révision : ${p.rythme}. Appelle-le par son prénom et adapte l'exigence à son niveau.` + coursContext();
+  for (const m of Object.values(MENTORS)) {
+    if (!m.prompt) continue;
+    if (m.base === undefined) m.base = m.prompt;
+    m.prompt = m.base + ctx;
+  }
+}
+
+function Onboarding({ onDone }) {
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [code, setCode] = useState(() => store.get("mj_code", ""));
+  const [prenom, setPrenom] = useState("");
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [niveau, setNiveau] = useState("");
+  const [matieres, setMatieres] = useState([]);
+  const [custom, setCustom] = useState("");
+  const [rows, setRows] = useState([]);
+  const [notes, setNotes] = useState({});
+  const [mentor, setMentor] = useState("marlowe");
+  const [objectif, setObjectif] = useState(OBJECTIFS[0]);
+  const [rythme, setRythme] = useState(RYTHMES[1]);
+
+  useEffect(() => { setErr(""); }, [code, prenom, email, consent, niveau, matieres, rows]);
+
+  const toggleMatiere = (m) => setMatieres((xs) => xs.includes(m) ? xs.filter((x) => x !== m) : [...xs, m]);
+  const addCustom = () => {
+    const m = clean(custom, 50);
+    if (m && !matieres.includes(m)) setMatieres((xs) => [...xs, m]);
+    setCustom("");
+  };
+  const setRow = (id, patch) => setRows((rs) => rs.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const syncRows = () => setRows((rs) => {
+    const kept = rs.filter((r) => matieres.includes(r.matiere));
+    const have = new Set(kept.map((r) => r.matiere));
+    const added = matieres.filter((m) => !have.has(m)).map((m) => ({ id: uid(), matiere: m, type: "partiel", date: "" }));
+    return [...kept, ...added];
+  });
+
+  async function checkCode() {
+    let r;
+    try {
+      // Un texte vide est refusé avec un 400 uniquement si le code est bon (sinon 401).
+      r = await fetch("/api/corriger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "", code: code.trim() }) });
+    } catch { return "network"; }
+    if (r.status === 401) return "bad";
+    if (r.status === 400) return "ok";
+    return "error";
+  }
+
+  async function next() {
+    setErr("");
+    if (step === 0) {
+      if (!code.trim()) return setErr("Entre le code d'accès qu'on t'a donné.");
+      if (!clean(prenom, 30)) return setErr("Dis-moi comment je dois t'appeler.");
+      if (email.trim()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr("Cette adresse e-mail n'a pas l'air valide.");
+        if (!consent) return setErr("Coche la case pour recevoir des nouvelles, ou laisse l'e-mail vide.");
+      }
+      setBusy(true);
+      const res = await checkCode();
+      setBusy(false);
+      if (res === "bad") return setErr("Code d'accès invalide.");
+      if (res === "network") return setErr("Connexion impossible. Vérifie ton réseau et réessaie.");
+      if (res !== "ok") return setErr("Impossible de vérifier le code pour le moment. Réessaie dans un instant.");
+      store.set("mj_code", code.trim());
+      return setStep(1);
+    }
+    if (step === 1) {
+      if (!niveau) return setErr("Choisis ton niveau.");
+      if (!matieres.length) return setErr("Choisis au moins une matière.");
+      syncRows();
+      return setStep(2);
+    }
+    if (step === 2) {
+      if (rows.some((r) => r.date && r.date < TODAY)) return setErr("Une des dates est déjà passée. Corrige-la ou laisse-la vide.");
+      return setStep(3);
+    }
+    if (step === 3) return setStep(4);
+    return finish();
+  }
+
+  function finish() {
+    const dated = rows.filter((r) => r.date);
+    const items = dated.map((r) => ({ id: uid(), date: r.date, title: (r.type === "partiel" ? "Partiel — " : "Rendu — ") + r.matiere, type: r.type, matiere: r.matiere, done: false }));
+    const nextOne = [...dated].sort((a, b) => a.date.localeCompare(b.date))[0];
+    const first = nextOne ? nextOne.matiere : matieres[0];
+    const withNotes = matieres.filter((m) => (notes[m] || "").trim());
+    const target = withNotes.length ? (withNotes.includes(first) ? first : withNotes[0]) : first;
+    const title = withNotes.length ? "Fais analyser tes notes de " + target : "Colle tes notes de " + target + " dans l'onglet Mes cours";
+    items.push({ id: uid(), date: TODAY, title, type: "tache", matiere: target, done: false, go: "cours" });
+    const profile = { prenom: clean(prenom, 30), niveau, matieres, objectif, rythme, mentor, createdAt: TODAY };
+    if (email.trim() && consent) {
+      const fd = new FormData();
+      fd.append("email", email.trim()); fd.append("niveau", niveau); fd.append("source", "app"); fd.append("consentement", "oui");
+      fetch(MJ_FORM, { method: "POST", headers: { Accept: "application/json" }, body: fd }).catch(() => {});
+    }
+    const cours = getCours();
+    for (const m of matieres) if ((notes[m] || "").trim()) cours[m] = { ...(cours[m] || {}), notes: notes[m], digest: undefined };
+    saveCours(cours);
+    store.set("mj_items", items);
+    store.set("mj_mentor", mentor);
+    store.set("mj_profile", profile);
+    onDone(profile);
+  }
+
+  const titles = ["Bienvenue", "Ton cursus", "Tes échéances", "Tes cours", "Ton mentor"];
+  const subs = [
+    "Quelques questions, trois minutes. Ensuite, le mentor te dit quoi faire dès aujourd'hui.",
+    "Pour adapter l'exigence et les exercices à ton niveau.",
+    "Sans dates, le mentor ne peut pas te donner d'ordre du jour. Tu peux en ajouter d'autres plus tard.",
+    "Colle ton plan de cours ou tes notes, matière par matière. Plus le mentor en sait, plus ses séances sont précises. Tu peux passer cette étape.",
+    "Le ton change, pas l'exigence. Tu pourras en changer à tout moment."
+  ];
+
+  return html`<div class="min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
+    <div class="w-full max-w-xl flex flex-col gap-5">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+          <span class="display font-medium tracking-tight">Mentor Juris</span>
+        </div>
+        <span class="mono text-xs text-dim">Étape ${step + 1} sur 5</span>
+      </div>
+      <div class="flex gap-1.5" aria-hidden="true">
+        ${[0, 1, 2, 3, 4].map((i) => html`<span key=${i} class="h-1 flex-1 rounded-full" style=${{ background: i <= step ? "var(--brass)" : "var(--panel-2)" }}></span>`)}
+      </div>
+
+      <div class="rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-1">
+          <h1 class="display text-2xl leading-tight">${titles[step]}</h1>
+          <p class="text-muted text-sm">${subs[step]}</p>
+        </div>
+
+        ${step === 0 && html`<div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-code">Code d'accès de la bêta</label>
+            <input id="ob-code" type="password" autoComplete="off" value=${code} onInput=${(e) => setCode(e.target.value)} class=${OINPUT} placeholder="Le code qu'on t'a donné" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-prenom">Ton prénom</label>
+            <input id="ob-prenom" type="text" autoComplete="given-name" value=${prenom} onInput=${(e) => setPrenom(e.target.value)} class=${OINPUT} placeholder="Comment le mentor doit t'appeler" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-email">E-mail (facultatif)</label>
+            <input id="ob-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} placeholder="Pour être prévenu des nouveautés" />
+            ${email.trim() && html`<label class="flex gap-2.5 items-start text-xs text-muted">
+              <input type="checkbox" checked=${consent} onChange=${(e) => setConsent(e.target.checked)} class="mt-0.5" style=${{ accentColor: "var(--brass)" }} />
+              <span>J'accepte de recevoir des e-mails sur Mentor Juris. Je peux me désinscrire à tout moment.</span></label>`}
+          </div>
+          <p class="text-xs text-dim">Les textes que tu soumets sont traités par une IA (Anthropic). L'IA peut se tromper : vérifie toujours les références. <a href="/landing.html#confidentialite" target="_blank" rel="noopener" class="underline" style=${{ color: "var(--brass)" }}>Confidentialité</a></p>
+        </div>`}
+
+        ${step === 1 && html`<div class="flex flex-col gap-5">
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton niveau</span>
+            <div class="flex flex-wrap gap-2">${NIVEAUX.map((n) => html`<${OChip} key=${n} on=${niveau === n} onClick=${() => setNiveau(n)}>${n}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Tes matières ce semestre</span>
+            <div class="flex flex-wrap gap-2">
+              ${(SUGGESTIONS[niveau] || []).map((m) => html`<${OChip} key=${m} on=${matieres.includes(m)} onClick=${() => toggleMatiere(m)}>${m}<//>`)}
+              ${matieres.filter((m) => !(SUGGESTIONS[niveau] || []).includes(m)).map((m) => html`<${OChip} key=${m} on=${true} onClick=${() => toggleMatiere(m)}>${m} ✕<//>`)}
+            </div>
+            ${!niveau && html`<p class="text-xs text-dim">Choisis d'abord ton niveau pour voir des suggestions.</p>`}
+            <div class="flex gap-2">
+              <input type="text" value=${custom} onInput=${(e) => setCustom(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
+                class=${OINPUT} placeholder="Ajouter une autre matière" aria-label="Ajouter une autre matière" />
+              <button type="button" onClick=${addCustom} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
+            </div>
+          </div>
+        </div>`}
+
+        ${step === 2 && html`<div class="flex flex-col gap-3">
+          ${rows.map((r) => html`<div key=${r.id} class="grid gap-2 rounded-xl border border-line p-3" style=${{ background: "var(--panel-2)" }}>
+            <div class="flex gap-2 items-center">
+              <select value=${r.matiere} onChange=${(e) => setRow(r.id, { matiere: e.target.value })} aria-label="Matière" class="flex-1 min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                ${matieres.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+              </select>
+              <button type="button" onClick=${() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label="Supprimer cette échéance" class="mono text-xs text-dim hover:text-red px-2 py-2">✕</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select value=${r.type} onChange=${(e) => setRow(r.id, { type: e.target.value })} aria-label="Type d'échéance" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                <option value="partiel">Partiel / examen</option>
+                <option value="td">Rendu de TD / galop</option>
+              </select>
+              <input type="date" value=${r.date} min=${TODAY} onInput=${(e) => setRow(r.id, { date: e.target.value })} aria-label="Date" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none" />
+            </div>
+          </div>`)}
+          <button type="button" onClick=${() => setRows((rs) => [...rs, { id: uid(), matiere: matieres[0], type: "partiel", date: "" }])}
+            class="mono text-xs py-2 px-4 rounded-lg border border-line text-muted hover:text-txt w-fit">+ Ajouter une échéance</button>
+          <p class="text-xs text-dim">Laisse la date vide si tu ne la connais pas encore.</p>
+        </div>`}
+
+        ${step === 3 && html`<div class="flex flex-col gap-4">
+          ${matieres.map((m) => html`<div key=${m} class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor=${"ob-n-" + m}>${m}</label>
+            <textarea id=${"ob-n-" + m} rows="4" value=${notes[m] || ""} onInput=${(e) => setNotes((n) => ({ ...n, [m]: e.target.value.slice(0, COURS_CAP) }))}
+              placeholder="Colle ici ton plan de cours ou tes notes (facultatif)" class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
+            ${(notes[m] || "").length > 0 && html`<span class="mono text-[11px] text-dim">${(notes[m] || "").length} caractères</span>`}
+          </div>`)}
+          <p class="text-xs text-dim">Tu pourras en ajouter à tout moment dans l'onglet « Mes cours », où le mentor les analyse.</p>
+        </div>`}
+
+        ${step === 4 && html`<div class="flex flex-col gap-5">
+          <div class="grid gap-2.5">
+            ${Object.entries(MENTORS).map(([k, m]) => html`<button key=${k} type="button" disabled=${m.pro} onClick=${() => setMentor(k)} aria-pressed=${mentor === k}
+              class="text-left rounded-xl border p-3.5 flex gap-3 items-start disabled:opacity-50"
+              style=${mentor === k ? { borderColor: "var(--brass)", background: "var(--brass-soft)" } : { borderColor: "var(--line)" }}>
+              <${Avatar} mentor=${m} size=${34} />
+              <span class="flex flex-col gap-0.5 min-w-0">
+                <span class="text-sm font-medium">${m.name} ${m.pro ? html`<span class="mono text-[10px] text-dim ml-1">Pro · bientôt</span>` : ""}</span>
+                <span class="text-xs text-muted">${m.tag}</span>
+                <span class="text-xs text-muted">${m.desc}</span>
+                <span class="text-xs text-dim italic mt-1">${m.quote}</span>
+              </span></button>`)}
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton objectif</span>
+            <div class="flex flex-wrap gap-2">${OBJECTIFS.map((o) => html`<${OChip} key=${o} on=${objectif === o} onClick=${() => setObjectif(o)}>${o}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton temps de révision</span>
+            <div class="flex flex-wrap gap-2">${RYTHMES.map((o) => html`<${OChip} key=${o} on=${rythme === o} onClick=${() => setRythme(o)}>${o}<//>`)}</div>
+          </div>
+        </div>`}
+
+        ${err && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${err}</div>`}
+
+        <div class="flex items-center justify-between pt-1">
+          ${step > 0 ? html`<button type="button" onClick=${() => { setErr(""); setStep(step - 1); }} class="mono text-xs text-muted hover:text-txt px-2 py-2">← Retour</button>` : html`<span></span>`}
+          <button type="button" onClick=${next} disabled=${busy}
+            class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${busy && html`<${Spinner} />`} ${step === 4 ? "Commencer" : "Continuer"}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function MesCours({ setItems }) {
+  const prof = store.get("mj_profile", null) || { matieres: [] };
+  const [cours, setCours] = useState(() => getCours());
+  const [busy, setBusy] = useState("");
+  const [prog, setProg] = useState("");
+  const [msg, setMsg] = useState("");
+  const [extra, setExtra] = useState("");
+  const matieres = [...new Set([...(prof.matieres || []), ...Object.keys(cours)])];
+
+  const update = (m, patch) => {
+    const latest = getCours();
+    const next = { ...latest, [m]: { notes: "", ...(latest[m] || {}), ...patch } };
+    if (!saveCours(next)) { setMsg("Le stockage du navigateur est plein. Raccourcis tes notes."); return false; }
+    setMsg("");
+    setCours(next);
+    refreshContext();
+    return true;
+  };
+  const setNotesFor = (m, text) => {
+    const tooLong = text.length > COURS_CAP;
+    if (update(m, { notes: text.slice(0, COURS_CAP) }) && tooLong) setMsg(`Notes tronquées à ${COURS_CAP.toLocaleString("fr-FR")} caractères.`);
+  };
+  const importFile = (m, file) => {
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      const cur = (getCours()[m] || {}).notes || "";
+      setNotesFor(m, (cur ? cur + "\n\n" : "") + String(rd.result || ""));
+    };
+    rd.readAsText(file);
+  };
+  const analyze = async (m) => {
+    const c = getCours()[m];
+    if (!c || !c.notes.trim()) return;
+    setBusy(m); setMsg("");
+    try {
+      const digest = await analyzeCours(m, c.notes, (i, n) => setProg(n > 1 ? `${i}/${n}` : ""));
+      update(m, { digest, analyzedLen: c.notes.length });
+      if (setItems) setItems((xs) => xs.map((i) => i.go === "cours" && i.matiere === m && !i.done ? { ...i, done: true, doneOn: TODAY } : i));
+    } catch (e) {
+      setMsg(errorText(e));
+    } finally { setBusy(""); setProg(""); }
+  };
+  const clear = (m) => { if (confirm("Vider les notes et l'analyse de « " + m + " » ?")) update(m, { notes: "", digest: undefined, analyzedLen: undefined }); };
+  const addMatiere = () => {
+    const m = clean(extra, 50);
+    if (m && !matieres.includes(m)) update(m, { notes: "" });
+    setExtra("");
+  };
+
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title="Mes cours" sub="Colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes restent dans ton navigateur et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
+    ${msg && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${msg}</div>`}
+    ${matieres.length === 0 && html`<p class="text-sm text-muted">Aucune matière pour l'instant. Ajoute-en une ci-dessous.</p>`}
+    ${matieres.map((m) => {
+      const c = cours[m] || { notes: "" };
+      const n = (c.notes || "").length;
+      const d = c.digest;
+      const stale = d && c.analyzedLen !== n;
+      return html`<section key=${m} class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <div class="flex items-baseline justify-between gap-3">
+          <h2 class="text-sm font-medium">${m}</h2>
+          <span class="mono text-xs ${d && !stale ? "text-ok" : "text-dim"}">${n === 0 ? "Aucune note" : d ? (stale ? "Notes modifiées" : "Analysé") : `${n.toLocaleString("fr-FR")} caractères`}</span>
+        </div>
+        <textarea rows=${n ? 6 : 3} value=${c.notes || ""} onInput=${(e) => setNotesFor(m, e.target.value)}
+          placeholder="Colle ici ton plan de cours, tes notes de CM, tes fiches…" aria-label=${"Notes de " + m}
+          class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" onClick=${() => analyze(m)} disabled=${!!busy || !n}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${busy === m && html`<${Spinner} />`} ${d ? "Réanalyser" : "Analyser mes notes"}${busy === m && prog ? ` (${prog})` : ""}</button>
+          <label class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt cursor-pointer">Importer un .txt
+            <input type="file" accept=".txt,.md,text/plain" class="hidden" onChange=${(e) => { importFile(m, e.target.files[0]); e.target.value = ""; }} /></label>
+          ${n > 0 && html`<button type="button" onClick=${() => clear(m)} class="mono text-xs px-3 py-2 text-dim hover:text-red">Vider</button>`}
+        </div>
+        ${stale && html`<p class="text-xs text-dim">Tes notes ont changé depuis la dernière analyse.</p>`}
+        ${d && html`<div class="rounded-xl border border-line p-3 text-xs flex flex-col gap-1.5" style=${{ background: "var(--panel-2)" }}>
+          <div class="eyebrow">Ce que le mentor a retenu · vérifie que c'est exact</div>
+          ${[["Plan", "plan"], ["Notions", "notions"], ["Arrêts", "arrets"]].map(([l, k]) => (d[k] || []).length ? html`<div key=${k}><span class="text-muted">${l} : </span>${d[k].join(" · ")}</div>` : null)}
+        </div>`}
+      </section>`;
+    })}
+    <div class="flex gap-2 max-w-md">
+      <input type="text" value=${extra} onInput=${(e) => setExtra(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addMatiere(); } }}
+        class=${OINPUT} placeholder="Ajouter une matière" aria-label="Ajouter une matière" />
+      <button type="button" onClick=${addMatiere} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+function Root() {
+  const [profile, setProfile] = useState(() => store.get("mj_profile", null));
+  if (!profile || !Array.isArray(profile.matieres)) return html`<${Onboarding} onDone=${setProfile} />`;
+  applyProfileContext(profile);
+  const reset = () => {
+    if (!confirm("Refaire la configuration ? Ton calendrier actuel sera remplacé. Tes notes de cours sont conservées.")) return;
+    store.set("mj_profile", null);
+    store.set("mj_items", []);
+    setProfile(null);
+  };
+  return html`<${React.Fragment}>
+    <${App} />
+    <button onClick=${reset} class="fixed bottom-3 right-3 z-40 mono text-[11px] px-2.5 py-1.5 rounded-lg border border-line text-dim hover:text-muted" style=${{ background: "var(--ink)" }}>Refaire la configuration</button>
+  <//>`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${Root} />`);
+</script>
+</body>
+</html>
