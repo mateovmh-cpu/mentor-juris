@@ -323,8 +323,8 @@ function MentorMessage({ items, mentor, streak, onDone, onPlan, onGo, planning }
       <p class="display text-[1.15rem] sm:text-[1.3rem] leading-snug">${m.order}</p>
       ${m.why && html`<p class="text-muted text-sm max-w-[70ch]">${m.why}</p>`}
       <div class="flex flex-wrap gap-2">
-        ${m.task && m.task.go === "cours" && html`<button id="msg-go" onClick=${() => onGo && onGo()}
-          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Aller à Mes cours →</button>`}
+        ${m.task && (m.task.go === "cours" || m.task.go === "test") && html`<button id="msg-go" onClick=${() => onGo && onGo(m.task.go)}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${m.task.go === "test" ? "Passer le test →" : "Aller à Mes cours →"}</button>`}
         ${m.task && html`<button id="msg-done" onClick=${() => { onDone(m.task.id); setRead(true); }}
           class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>✓ C'est fait</button>`}
         ${m.plan && html`<button onClick=${onPlan} disabled=${planning}
@@ -510,7 +510,7 @@ Réponds uniquement avec un tableau JSON : [{"date":"YYYY-MM-DD","titre":"séanc
   };
 
   return html`<div class="flex flex-col gap-6">
-    <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${() => setPage("cours")} planning=${planning} />
+    <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${(g) => setPage(g || "cours")} planning=${planning} />
     ${error && html`<div class="rounded-xl p-4 border border-red/30 bg-red-soft text-red text-sm">${error}</div>`}
     <${Tracker} items=${items} selected=${selected} setSelected=${setSelected} />
     <${DayRail} items=${items} selected=${selected} onToggle=${toggle} onAdd=${add} onRemove=${remove} />
@@ -955,7 +955,9 @@ function App() {
 
   const streak = useMemo(() => streakOf(items), [items]);
 
-  const coursDot = !Object.values(getCours()).some((v) => v && v.digest);
+  const coursDot = !anyDigest();
+  const testDot = anyDigest() && !hasResults();
+  useEffect(() => { ensureTestNudge(setItems); }, []);
   const navs = [
     { id: "pilotage", label: "1 Pilotage" },
     { id: "fiches", label: "2 Fiches d'arrêt" },
@@ -963,6 +965,7 @@ function App() {
     { id: "notes", label: "4 Notes de cours" },
     { id: "examen", label: "5 Cellule d'examen" },
     { id: "cours", label: "6 Mes cours", dot: coursDot },
+    { id: "test", label: hasResults() ? "7 Bilan" : "7 Test", dot: testDot },
   ];
 
   return html`<div class="min-h-screen flex flex-col pb-16">
@@ -1007,7 +1010,8 @@ function App() {
       ${page === "cas" && html`<${CasPratiques} sample=${sample} />`}
       ${page === "notes" && html`<${NotesCours} sample=${sample} />`}
       ${page === "examen" && html`<${CelluleEntrainement} sample=${sample} />`}
-      ${page === "cours" && html`<${MesCours} setItems=${setItems} />`}
+      ${page === "cours" && html`<${MesCours} setItems=${setItems} setPage=${setPage} />`}
+      ${page === "test" && html`<${TestDepart} setItems=${setItems} setPage=${setPage} />`}
     </main>
   </div>`;
 }
@@ -1198,7 +1202,7 @@ function OChip({ on, onClick, children }) {
 }
 
 function applyProfileContext(p) {
-  const ctx = ` Contexte de l'étudiant : prénom ${p.prenom}, niveau ${p.niveau}, matières : ${p.matieres.join(", ")}. Objectif : ${p.objectif}. Rythme de révision : ${p.rythme}. Appelle-le par son prénom et adapte l'exigence à son niveau.` + coursContext();
+  const ctx = ` Contexte de l'étudiant : prénom ${p.prenom}, niveau ${p.niveau}, matières : ${p.matieres.join(", ")}. Objectif : ${p.objectif}. Rythme de révision : ${p.rythme}. Appelle-le par son prénom et adapte l'exigence à son niveau.` + coursContext() + testContext();
   for (const m of Object.values(MENTORS)) {
     if (!m.prompt) continue;
     if (m.base === undefined) m.base = m.prompt;
@@ -1440,7 +1444,7 @@ function Onboarding({ onDone }) {
   </div>`;
 }
 
-function MesCours({ setItems }) {
+function MesCours({ setItems, setPage }) {
   const prof = store.get("mj_profile", null) || { matieres: [] };
   const [cours, setCours] = useState(() => getCours());
   const [busy, setBusy] = useState("");
@@ -1489,7 +1493,7 @@ function MesCours({ setItems }) {
     try {
       const { digest, skipped } = await analyzeCours(m, c.notes, (i, n) => setProg(n > 1 ? `${i}/${n}` : ""));
       update(m, { digest, skipped, analyzedLen: c.notes.length });
-      if (setItems) setItems((xs) => xs.map((i) => i.go === "cours" && i.matiere === m && !i.done ? { ...i, done: true, doneOn: TODAY } : i));
+      if (setItems) { setItems((xs) => xs.map((i) => i.go === "cours" && i.matiere === m && !i.done ? { ...i, done: true, doneOn: TODAY } : i)); ensureTestNudge(setItems); }
     } catch (e) {
       setMsg(errorText(e));
     } finally { setBusy(""); setProg(""); }
@@ -1538,6 +1542,7 @@ function MesCours({ setItems }) {
         ${stale && html`<p class="text-xs text-dim">Tes notes ont changé depuis la dernière analyse.</p>`}
         ${d && c.skipped > 0 && html`<p class="text-xs text-dim">${c.skipped} partie(s) du cours n'ont pas pu être analysées. Relance l'analyse pour réessayer.</p>`}
         ${d && !stale && html`<p class="text-xs text-ok">✓ Cours analysé : ${d.plan.length} parties, ${d.notions.length} notions, ${d.arrets.length} arrêts repérés.</p>`}
+        ${d && !stale && !hasResults() && setPage && html`<div><button type="button" onClick=${() => setPage("test")} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Passer le test de départ →</button></div>`}
       </section>`;
     })}
     <div class="flex gap-2 max-w-md">
@@ -1545,6 +1550,317 @@ function MesCours({ setItems }) {
         class=${OINPUT} placeholder="Ajouter une matière" aria-label="Ajouter une matière" />
       <button type="button" onClick=${addMatiere} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
     </div>
+  </div>`;
+}
+
+/* ===== Test de départ ===== */
+const QZ_KEY = "mj_quiz";
+const getQuiz = () => { const q = store.get(QZ_KEY, null); return q && Array.isArray(q.results) ? q : { results: [], diag: null }; };
+const saveQuiz = (q) => store.set(QZ_KEY, q);
+const hasResults = () => getQuiz().results.some((r) => !r.flagged);
+const anyDigest = () => Object.values(getCours()).some((v) => v && v.digest);
+const BLOCAGES = ["Comprendre le cours", "Retenir et mémoriser", "Manque de temps", "M'organiser", "Rien de précis"];
+const STATUS_COLOR = { rouge: "var(--red)", orange: "var(--brass)", vert: "var(--ok)" };
+const STATUS_LABEL = { rouge: "À reprendre", orange: "À consolider", vert: "Acquis" };
+
+const QZ = { s: { phase: "intro" }, subs: new Set() };
+function setQZ(p) { QZ.s = { ...QZ.s, ...(typeof p === "function" ? p(QZ.s) : p) }; QZ.subs.forEach((f) => f()); }
+function useQZ() {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force((x) => x + 1); QZ.subs.add(f); return () => QZ.subs.delete(f); }, []);
+  return QZ.s;
+}
+
+function bilanFor(results) {
+  const groups = {};
+  for (const r of results) {
+    if (r.flagged) continue;
+    const key = r.matiere + "|" + String(r.chapitre).toLowerCase();
+    (groups[key] = groups[key] || []).push(r);
+  }
+  return Object.values(groups).map((g) => {
+    const last = g.slice(-4);
+    const ok = last.filter((r) => r.ok).length, ko = last.length - ok;
+    return { matiere: last[0].matiere, chapitre: last[last.length - 1].chapitre, ok, ko, status: ko === 0 ? "vert" : ok === 0 ? "rouge" : "orange" };
+  });
+}
+function testContext() {
+  const q = getQuiz();
+  let s = "";
+  if (q.diag) {
+    const conf = Object.entries(q.diag.conf || {}).map(([m, n]) => `${m} ${n}/5`).join(", ");
+    if (conf || q.diag.blocage) s += ` Ressenti de l'étudiant :${conf ? " confiance " + conf + "." : ""}${q.diag.blocage ? " blocage principal : " + q.diag.blocage.toLowerCase() + "." : ""}`;
+  }
+  const b = bilanFor(q.results);
+  if (b.length) {
+    const L = (st) => b.filter((x) => x.status === st).slice(0, 6).map((x) => `${x.chapitre} (${x.matiere})`).join(" ; ");
+    const parts = [["à reprendre en priorité", L("rouge")], ["à consolider", L("orange")], ["acquis", L("vert")]].filter(([, v]) => v).map(([k, v]) => `${k} : ${v}`);
+    s += ` Résultats du test de départ — ${parts.join(". ")}.`;
+  }
+  return s.slice(0, 1000);
+}
+
+function spreadPick(n, k) {
+  if (k >= n) return Array.from({ length: n }, (_, i) => i);
+  const out = [];
+  for (let j = 0; j < k; j++) {
+    const lo = Math.floor((j * n) / k), hi = Math.max(lo + 1, Math.floor(((j + 1) * n) / k));
+    out.push(lo + Math.floor(Math.random() * (hi - lo)));
+  }
+  return out;
+}
+function shuffled(a) {
+  const b = a.slice();
+  for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; }
+  return b;
+}
+function quizPrompt(matiere, chunk, q, plan) {
+  return `Voici un extrait des notes de cours d'un étudiant en droit, matière : ${matiere}. Rédige ${q} question${q > 1 ? "s" : ""} à choix multiple pour tester sa compréhension, en t'appuyant uniquement sur cet extrait.
+Règles : 4 propositions dont une seule exacte ; les 3 autres sont plausibles mais fausses d'après l'extrait. Varie les types : notion à définir, petit cas concret à qualifier, solution d'un arrêt. Évite les détails sans enjeu. Ne pose aucune question dont la réponse ne figure pas dans l'extrait.
+"chapitre" : choisis dans cette liste l'intitulé le plus proche de la partie concernée, sinon formule-le en 6 mots au maximum : ${plan}
+"explication" : une phrase qui justifie la bonne réponse.
+Réponds uniquement en JSON : [{"chapitre":"...","question":"...","choix":["...","...","...","..."],"bonne":0,"explication":"..."}] où "bonne" est l'indice (0 à 3) de la bonne proposition.
+EXTRAIT :
+${chunk}`;
+}
+function cleanQuestions(raw, matiere) {
+  const arr = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.questions) ? raw.questions : []);
+  const out = [];
+  for (const x of arr) {
+    if (!x || typeof x.question !== "string" || !Array.isArray(x.choix) || x.choix.length !== 4) continue;
+    const bonne = Number(x.bonne);
+    if (!Number.isInteger(bonne) || bonne < 0 || bonne > 3) continue;
+    const ch = x.choix.map((c) => clean(c, 220));
+    if (ch.some((c) => !c) || new Set(ch.map((c) => c.toLowerCase())).size < 4) continue;
+    const q = clean(x.question, 420);
+    if (q.length < 12) continue;
+    out.push({ id: uid(), matiere, chapitre: clean(x.chapitre, 80) || "Divers", q, opts: shuffled(ch.map((t, i) => ({ t, ok: i === bonne }))), why: clean(x.explication, 420) });
+  }
+  return out;
+}
+async function genTest(subjects, onProgress) {
+  const jobs = [];
+  for (const s of subjects) {
+    const all = chunkText(s.notes.slice(0, COURS_CAP));
+    const total = Math.max(4, Math.min(8, Math.round(s.notes.length / 2500)));
+    const k = Math.min(4, all.length, total);
+    const base = Math.floor(total / k), extra = total % k;
+    spreadPick(all.length, k).forEach((ci, j) => jobs.push({ m: s.m, chunk: all[ci], q: base + (j < extra ? 1 : 0), plan: s.plan }));
+  }
+  const res = new Map(subjects.map((s) => [s.m, []]));
+  let next = 0, done = 0, fatal = null, lastErr = null;
+  const worker = async () => {
+    while (!fatal) {
+      const i = next++;
+      if (i >= jobs.length) return;
+      const j = jobs[i];
+      try { res.get(j.m).push(...cleanQuestions(await askRetry(quizPrompt(j.m, j.chunk, j.q, j.plan)), j.m)); }
+      catch (e) {
+        if (e && (e.code === "invalid_json" || e.code === "failed")) lastErr = e;
+        else { fatal = e || { code: "failed" }; return; }
+      }
+      done++;
+      if (onProgress) onProgress(done, jobs.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, worker));
+  if (fatal) throw fatal;
+  const out = [];
+  for (const s of subjects) {
+    const seen = new Set();
+    const uniq = res.get(s.m).filter((x) => { const k = x.q.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    if (uniq.length < 3) throw lastErr || { code: "invalid_json" };
+    out.push(...uniq);
+  }
+  return out;
+}
+
+function planFromBilan(setItems) {
+  const b = bilanFor(getQuiz().results).filter((x) => x.status !== "vert");
+  const cur = store.get("mj_items", []);
+  const urg = (m) => {
+    const d = cur.filter((i) => i.type === "partiel" && i.matiere === m && i.date >= TODAY).map((i) => diffDays(TODAY, i.date)).sort((x, y) => x - y)[0];
+    return d === undefined ? 1 : 1 + 7 / (d + 7);
+  };
+  const top = b.map((x) => ({ ...x, score: (x.status === "rouge" ? 1 : 0.5) * urg(x.matiere) })).sort((x, y) => y.score - x.score).slice(0, 6);
+  const per = Math.max(1, parseInt((((store.get("mj_profile", null) || {}).rythme || "").match(/\d/) || ["1"])[0], 10));
+  const tasks = top.map((x, i) => ({ id: uid(), date: isoIn(Math.floor(i / per)), title: `Revoir ${x.chapitre} (${x.matiere})`, type: "revision", matiere: x.matiere, done: false, src: "test" }));
+  setItems((xs) => [...xs.filter((i) => !(i.src === "test" && !i.done)).map((i) => i.go === "test" && !i.done ? { ...i, done: true, doneOn: TODAY } : i), ...tasks]);
+  return tasks.length;
+}
+function ensureTestNudge(setItems) {
+  if (!setItems || !anyDigest() || hasResults()) return;
+  const m = Object.keys(getCours()).find((k) => (getCours()[k] || {}).digest);
+  setItems((xs) => xs.some((i) => i.go === "test") ? xs : [...xs, { id: uid(), date: TODAY, title: "Fais ton test de départ", type: "tache", matiere: m, done: false, go: "test" }]);
+}
+
+function bilanSentence(b) {
+  const by = (st) => b.filter((x) => x.status === st);
+  const names = (a) => a.slice(0, 3).map((x) => `« ${x.chapitre} »`).join(", ");
+  const r = by("rouge"), o = by("orange"), v = by("vert");
+  if (!b.length) return "";
+  if (r.length) return `Priorité : ${names(r)}.${o.length ? ` Ensuite à consolider : ${names(o)}.` : ""}${v.length ? ` Le reste tient : ${v.length} partie${v.length > 1 ? "s" : ""} acquise${v.length > 1 ? "s" : ""}.` : ""}`;
+  if (o.length) return `Pas de point noir. À consolider : ${names(o)}.${v.length ? ` ${v.length} partie${v.length > 1 ? "s" : ""} acquise${v.length > 1 ? "s" : ""}.` : ""}`;
+  return "Tout ce qui a été testé est acquis. Refais un test dans quelques jours pour vérifier que ça tient.";
+}
+
+function BilanView({ fresh, nTasks, setPage, onAgain }) {
+  const b = bilanFor(getQuiz().results);
+  const order = { rouge: 0, orange: 1, vert: 2 };
+  const mats = [...new Set(b.map((x) => x.matiere))];
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title=${fresh ? "Ton bilan" : "Mon bilan"} sub="Chaque ligne est une partie de ton cours, avec le résultat de tes questions." />
+    <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-1">
+      <div class="eyebrow">${MENTOR_SHORT}</div>
+      <p class="display text-[1.05rem]">${bilanSentence(b) || "Pas encore de résultat exploitable."}</p>
+      ${fresh && nTasks > 0 && html`<p class="text-sm text-muted">J'ai ajouté ${nTasks} séance${nTasks > 1 ? "s" : ""} de révision à ton Pilotage, dans cet ordre.</p>`}
+    </div>
+    ${mats.map((m) => html`<section key=${m} class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-2">
+      <h2 class="text-sm font-medium">${m}</h2>
+      ${b.filter((x) => x.matiere === m).sort((x, y) => order[x.status] - order[y.status]).map((x) => html`<div key=${x.chapitre} class="flex items-center gap-3 text-sm">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0" style=${{ background: STATUS_COLOR[x.status] }} aria-hidden="true"></span>
+        <span class="flex-1 min-w-0">${x.chapitre}</span>
+        <span class="mono text-xs text-dim shrink-0">${STATUS_LABEL[x.status]} · ${x.ok}/${x.ok + x.ko}</span>
+      </div>`)}
+    </section>`)}
+    <div class="flex flex-wrap gap-2">
+      ${fresh && html`<button type="button" onClick=${() => setPage("pilotage")} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Voir mon Pilotage →</button>`}
+      <button type="button" onClick=${onAgain} class=${fresh ? "mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt" : "mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110"} style=${fresh ? {} : { background: "var(--brass)" }}>Refaire un test</button>
+    </div>
+  </div>`;
+}
+
+function TestDepart({ setItems, setPage }) {
+  const s = useQZ();
+  useEffect(() => () => { if (QZ.s.phase === "result") QZ.s = { ...QZ.s, phase: "intro", again: false }; }, []);
+  const prof = store.get("mj_profile", null) || {};
+  const cours = getCours();
+  const ready = [...new Set([...(prof.matieres || []), ...Object.keys(cours)])].filter((m) => cours[m] && cours[m].digest && (cours[m].notes || "").trim());
+  const sel = s.sel || Object.fromEntries(ready.map((m) => [m, true]));
+  const chosen = ready.filter((m) => sel[m]);
+  const conf = s.conf || {};
+
+  const start = async () => {
+    if (!chosen.length) return;
+    const q = getQuiz();
+    q.diag = { conf: Object.fromEntries(chosen.filter((m) => conf[m]).map((m) => [m, conf[m]])), blocage: s.blocage || "", at: TODAY };
+    saveQuiz(q); refreshContext();
+    setQZ({ phase: "gen", prog: [0, 1], err: "" });
+    try {
+      const subjects = chosen.map((m) => ({ m, notes: cours[m].notes, plan: (cours[m].digest.plan || []).join(" ; ").slice(0, 1500) }));
+      const questions = await genTest(subjects, (d, n) => setQZ({ prog: [d, n] }));
+      setQZ({ phase: "quiz", questions, idx: 0, picked: null, flagged: false, answered: 0 });
+    } catch (e) { setQZ({ phase: "error", err: errorText(e) }); }
+  };
+  const record = (ok, idk, i) => {
+    const q = s.questions[s.idx];
+    const st = getQuiz();
+    st.results.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, ok, idk, date: TODAY, q: q.q.slice(0, 160) });
+    st.results = st.results.slice(-400);
+    saveQuiz(st);
+    setQZ({ picked: i, flagged: false, answered: (s.answered || 0) + 1 });
+  };
+  const flag = () => {
+    const q = s.questions[s.idx];
+    const st = getQuiz();
+    const r = st.results.find((x) => x.id === q.id);
+    if (r) r.flagged = true;
+    saveQuiz(st);
+    setQZ({ flagged: true });
+  };
+  const finish = () => {
+    refreshContext();
+    const n = hasResults() ? planFromBilan(setItems) : 0;
+    refreshContext();
+    setQZ({ phase: "result", nTasks: n, again: false });
+  };
+  const next = () => {
+    if (s.idx + 1 >= s.questions.length) return finish();
+    setQZ({ idx: s.idx + 1, picked: null, flagged: false });
+  };
+
+  if (s.phase === "gen") {
+    const [d, n] = s.prog || [0, 1];
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <${PageHead} title="Test de départ" sub="Le mentor prépare tes questions à partir de tes notes." />
+      <div class="rounded-2xl border border-line bg-panel p-5 flex flex-col gap-3" role="status">
+        <div class="flex items-center gap-2 text-sm"><${Spinner} /> Préparation des questions… ${d}/${n}</div>
+        <div class="h-1.5 rounded-full overflow-hidden" style=${{ background: "var(--panel-2)" }}><div class="h-full" style=${{ width: Math.round((100 * d) / n) + "%", background: "var(--brass)", transition: "width .3s" }}></div></div>
+        <p class="text-xs text-dim">Compte 20 à 40 secondes.</p>
+      </div>
+    </div>`;
+  }
+  if (s.phase === "error") {
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <${PageHead} title="Test de départ" />
+      <div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${s.err}</div>
+      <div><button type="button" onClick=${() => setQZ({ phase: "intro", err: "" })} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Réessayer</button></div>
+    </div>`;
+  }
+  if (s.phase === "quiz") {
+    const q = s.questions[s.idx];
+    const total = s.questions.length;
+    const answered = s.picked !== null && s.picked !== undefined;
+    const good = q.opts.findIndex((o) => o.ok);
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <div class="flex items-center justify-between gap-3">
+        <span class="mono text-xs text-muted">${q.matiere} · ${q.chapitre}</span>
+        <span class="mono text-xs text-dim shrink-0">Question ${s.idx + 1} sur ${total}</span>
+      </div>
+      <div class="h-1 rounded-full overflow-hidden" style=${{ background: "var(--panel-2)" }}><div class="h-full" style=${{ width: Math.round((100 * (s.idx + (answered ? 1 : 0))) / total) + "%", background: "var(--brass)", transition: "width .3s" }}></div></div>
+      <h2 class="display text-[1.15rem] leading-snug" id="qz-q">${q.q}</h2>
+      <div class="flex flex-col gap-2" role="group" aria-labelledby="qz-q">
+        ${q.opts.map((o, i) => {
+          const picked = s.picked === i;
+          const style = !answered ? {} : o.ok ? { borderColor: "var(--ok)", background: "rgba(79,191,139,.10)" } : picked ? { borderColor: "var(--red)", background: "var(--red-soft)" } : { opacity: 0.55 };
+          return html`<button key=${i} type="button" disabled=${answered} onClick=${() => record(o.ok, false, i)}
+            class="qz-opt w-full text-left rounded-xl border border-line bg-panel px-4 py-3 text-sm flex gap-3 hover:border-line2 disabled:cursor-default" style=${style}>
+            <span class="mono text-xs text-dim pt-0.5">${"ABCD"[i]}</span><span>${o.t}</span></button>`;
+        })}
+        ${!answered && html`<button type="button" onClick=${() => record(false, true, -1)} class="qz-idk mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt self-start">Je ne sais pas</button>`}
+      </div>
+      ${answered && html`<div class="rounded-xl border border-line p-3 text-sm flex flex-col gap-2" style=${{ background: "var(--panel-2)" }} role="status">
+        <p><span class="font-medium" style=${{ color: s.picked === good ? "var(--ok)" : "var(--red)" }}>${s.picked === good ? "Bonne réponse." : s.picked === -1 ? "Pas de souci, c'est utile à savoir." : "Pas tout à fait."}</span>
+          ${s.picked !== good && html` La bonne réponse est ${"ABCD"[good]}.`}</p>
+        ${q.why && html`<p class="text-muted">${q.why}</p>`}
+      </div>`}
+      <div class="flex flex-wrap items-center gap-2">
+        ${answered && html`<button type="button" id="qz-next" onClick=${next} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${s.idx + 1 >= total ? "Voir mon bilan" : "Suivant →"}</button>`}
+        ${answered && html`<button type="button" id="qz-flag" onClick=${flag} disabled=${s.flagged} class="mono text-xs px-3 py-2 text-dim hover:text-txt disabled:opacity-70">${s.flagged ? "✓ Question écartée" : "Question fausse ou mal posée"}</button>`}
+        <button type="button" id="qz-stop" onClick=${() => (s.answered ? finish() : setQZ({ phase: "intro" }))} class="mono text-xs px-3 py-2 text-dim hover:text-txt ml-auto">Arrêter</button>
+      </div>
+    </div>`;
+  }
+  if (s.phase === "result" || (s.phase === "intro" && hasResults() && !s.again)) {
+    return html`<${BilanView} fresh=${s.phase === "result"} nTasks=${s.nTasks || 0} setPage=${setPage} onAgain=${() => setQZ({ phase: "intro", again: true })} />`;
+  }
+  // intro
+  const todo = (prof.matieres || []).filter((m) => !ready.includes(m));
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title="Test de départ" sub="Des questions tirées de tes propres notes. En quelques minutes, le mentor voit ce que tu maîtrises et ce qu'il faut reprendre en premier." />
+    ${ready.length === 0 && html`<div class="rounded-2xl border border-line bg-panel p-5 flex flex-col gap-3">
+      <p class="text-sm">Pour préparer le test, le mentor a d'abord besoin d'un cours analysé.</p>
+      <div><button type="button" onClick=${() => setPage("cours")} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Aller à Mes cours →</button></div>
+    </div>`}
+    ${ready.length > 0 && html`<section class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+      <div class="eyebrow">Matières à tester</div>
+      <div class="flex flex-wrap gap-2">${ready.map((m) => html`<${OChip} key=${m} on=${!!sel[m]} onClick=${() => setQZ({ sel: { ...sel, [m]: !sel[m] } })}>${m}<//>`)}</div>
+      ${todo.length > 0 && html`<p class="text-xs text-dim">Pas encore analysé : ${todo.join(", ")}.</p>`}
+    </section>
+    <section class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+      <div class="eyebrow">Ton ressenti · facultatif</div>
+      ${chosen.map((m) => html`<div key=${m} class="flex flex-col gap-1.5">
+        <span class="text-sm">${m} : à quel point te sens-tu prêt ?</span>
+        <div class="flex flex-wrap gap-2">${[1, 2, 3, 4, 5].map((n) => html`<${OChip} key=${n} on=${conf[m] === n} onClick=${() => setQZ({ conf: { ...conf, [m]: n } })}>${n}<//>`)}</div>
+      </div>`)}
+      <p class="text-xs text-dim">1 = pas du tout sûr de moi, 5 = très sûr de moi.</p>
+      <span class="text-sm pt-1">Ce qui te bloque le plus en ce moment :</span>
+      <div class="flex flex-wrap gap-2">${BLOCAGES.map((b) => html`<${OChip} key=${b} on=${s.blocage === b} onClick=${() => setQZ({ blocage: b })}>${b}<//>`)}</div>
+    </section>
+    <div class="flex flex-col gap-2 items-start">
+      <button type="button" id="qz-start" onClick=${start} disabled=${!chosen.length} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50" style=${{ background: "var(--brass)" }}>Commencer le test</button>
+      <p class="text-xs text-dim max-w-[60ch]">Environ ${Math.max(3, chosen.length * 4)} minutes. Quand tu hésites, réponds « Je ne sais pas » plutôt que de deviner : le mentor te lira mieux.</p>
+    </div>`}
   </div>`;
 }
 
