@@ -511,6 +511,7 @@ Réponds uniquement avec un tableau JSON : [{"date":"YYYY-MM-DD","titre":"séanc
 
   return html`<div class="flex flex-col gap-6">
     <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${(g) => setPage(g || "cours")} planning=${planning} />
+    <${DailyQuestion} />
     ${error && html`<div class="rounded-xl p-4 border border-red/30 bg-red-soft text-red text-sm">${error}</div>`}
     <${Tracker} items=${items} selected=${selected} setSelected=${setSelected} />
     <${DayRail} items=${items} selected=${selected} onToggle=${toggle} onAdd=${add} onRemove=${remove} />
@@ -975,10 +976,10 @@ function App() {
           <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
           <span class="display font-medium tracking-tight group-hover:opacity-80 whitespace-nowrap">Mentor Juris</span>
         </button>
-        <nav class="hidden md:flex navscroll items-center gap-1 pl-4 border-l border-line" aria-label="Navigation principale">
+        <nav class="hidden md:flex navscroll items-center gap-0.5 pl-4 border-l border-line" aria-label="Navigation principale">
           ${navs.map((n) => html`
             <button key=${n.id} onClick=${() => setPage(n.id)}
-              class=${`mono text-xs px-2 py-1.5 rounded-[10px] transition-colors whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted hover:text-txt"}`}>
+              class=${`mono text-xs px-1.5 py-1.5 rounded-[10px] transition-colors whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted hover:text-txt"}`}>
               ${n.label}${n.dot && html`<span class="inline-block w-1.5 h-1.5 rounded-full ml-1.5 pulse" style=${{ background: "var(--brass)" }} aria-label="À faire"></span>`}</button>
           `)}
         </nav>
@@ -1758,6 +1759,7 @@ function TestDepart({ setItems, setPage }) {
     st.results.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, ok, idk, date: TODAY, q: q.q.slice(0, 160) });
     st.results = st.results.slice(-400);
     saveQuiz(st);
+    bankAdd(q, ok);
     setQZ({ picked: i, flagged: false, answered: (s.answered || 0) + 1 });
   };
   const flag = () => {
@@ -1766,6 +1768,7 @@ function TestDepart({ setItems, setPage }) {
     const r = st.results.find((x) => x.id === q.id);
     if (r) r.flagged = true;
     saveQuiz(st);
+    bankRemove(q.id);
     setQZ({ flagged: true });
   };
   const finish = () => {
@@ -1862,6 +1865,101 @@ function TestDepart({ setItems, setPage }) {
       <p class="text-xs text-dim max-w-[60ch]">Environ ${Math.max(3, chosen.length * 4)} minutes. Quand tu hésites, réponds « Je ne sais pas » plutôt que de deviner : le mentor te lira mieux.</p>
     </div>`}
   </div>`;
+}
+
+/* ===== Question du jour ===== */
+const BANK_KEY = "mj_qbank", DAILY_KEY = "mj_daily";
+const DAILY_MAX = 3, INTERVALS = [1, 3, 7, 16];
+const getBank = () => { const b = store.get(BANK_KEY, []); return Array.isArray(b) ? b : []; };
+const saveBank = (b) => store.set(BANK_KEY, b.slice(-300));
+function bankAdd(q, ok) {
+  const box = ok ? 1 : 0;
+  const b = getBank().filter((x) => x.id !== q.id);
+  b.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, q: q.q, opts: q.opts, why: q.why, box, due: isoIn(INTERVALS[box]) });
+  saveBank(b);
+}
+function bankUpdate(id, ok) {
+  const b = getBank();
+  const x = b.find((e) => e.id === id);
+  if (!x) return;
+  x.box = ok ? Math.min(3, x.box + 1) : 0;
+  x.due = isoIn(INTERVALS[x.box]);
+  saveBank(b);
+}
+const bankRemove = (id) => saveBank(getBank().filter((x) => x.id !== id));
+const getDaily = () => { const d = store.get(DAILY_KEY, null); return d && d.date === TODAY ? d : { date: TODAY, done: 0, ok: 0, ids: [] }; };
+const dueQuestions = () => {
+  const d = getDaily();
+  return getBank().filter((x) => x.due <= TODAY && !d.ids.includes(x.id)).sort((a, b) => a.due.localeCompare(b.due) || a.box - b.box);
+};
+
+function DailyQuestion() {
+  const [cur, setCur] = useState(null);
+  const [picked, setPicked] = useState(null);
+  const [flagged, setFlagged] = useState(false);
+  const [, force] = useState(0);
+  const daily = getDaily();
+  const due = dueQuestions();
+  const q = cur || (daily.done < DAILY_MAX ? due[0] : null);
+  const answered = picked !== null;
+
+  if (!q) {
+    if (!daily.done) return null;
+    return html`<section class="rounded-2xl border border-line bg-panel px-5 py-3 flex items-center gap-3 text-sm" aria-label="Question du jour">
+      <span style=${{ color: "var(--ok)" }}>✓</span><span>Question du jour faite · ${daily.ok}/${daily.done}. Reviens demain pour la suite.</span></section>`;
+  }
+  const total = Math.min(DAILY_MAX, daily.done + due.length);
+  const num = answered ? daily.done : daily.done + 1;
+  const good = q.opts.findIndex((o) => o.ok);
+  const answer = (i) => {
+    const ok = i >= 0 && q.opts[i].ok;
+    setCur(q); setPicked(i); setFlagged(false);
+    bankUpdate(q.id, ok);
+    const d = getDaily();
+    d.ids = [...d.ids, q.id]; d.done += 1; d.ok += ok ? 1 : 0;
+    store.set(DAILY_KEY, d);
+    const st = getQuiz();
+    st.results.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, ok, idk: i < 0, date: TODAY, q: q.q.slice(0, 160), daily: true });
+    st.results = st.results.slice(-400);
+    saveQuiz(st);
+    refreshContext();
+  };
+  const flag = () => {
+    setFlagged(true);
+    bankRemove(q.id);
+    const st = getQuiz();
+    st.results.forEach((r) => { if (r.id === q.id) r.flagged = true; });
+    saveQuiz(st);
+  };
+  const next = () => { setCur(null); setPicked(null); setFlagged(false); force((x) => x + 1); };
+
+  return html`<section class="rounded-2xl border border-line bg-panel" aria-label="Question du jour">
+    <div class="flex items-center justify-between gap-3 px-5 sm:px-6 py-2.5 border-b border-line">
+      <span class="eyebrow">Question du jour · ${q.matiere}</span>
+      <span class="mono text-xs text-dim shrink-0">${num} sur ${total}</span>
+    </div>
+    <div class="px-5 sm:px-6 py-4 flex flex-col gap-3">
+      <p class="display text-[1.05rem] leading-snug" id="dq-q">${q.q}</p>
+      <div class="flex flex-col gap-2" role="group" aria-labelledby="dq-q">
+        ${q.opts.map((o, i) => {
+          const style = !answered ? {} : o.ok ? { borderColor: "var(--ok)", background: "rgba(79,191,139,.10)" } : picked === i ? { borderColor: "var(--red)", background: "var(--red-soft)" } : { opacity: 0.55 };
+          return html`<button key=${i} type="button" disabled=${answered} onClick=${() => answer(i)}
+            class="dq-opt w-full text-left rounded-xl border border-line px-4 py-2.5 text-sm flex gap-3 hover:border-line2 disabled:cursor-default" style=${style}>
+            <span class="mono text-xs text-dim pt-0.5">${"ABCD"[i]}</span><span>${o.t}</span></button>`;
+        })}
+        ${!answered && html`<button type="button" onClick=${() => answer(-1)} class="dq-idk mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt self-start">Je ne sais pas</button>`}
+      </div>
+      ${answered && html`<div class="rounded-xl border border-line p-3 text-sm flex flex-col gap-1.5" style=${{ background: "var(--panel-2)" }} role="status">
+        <p><span class="font-medium" style=${{ color: picked === good ? "var(--ok)" : "var(--red)" }}>${picked === good ? "Bonne réponse." : picked === -1 ? "Pas de souci, elle reviendra." : "Pas tout à fait."}</span>
+          ${picked !== good && html` La bonne réponse est ${"ABCD"[good]}.`}</p>
+        ${q.why && html`<p class="text-muted">${q.why}</p>`}
+      </div>`}
+      ${answered && html`<div class="flex flex-wrap items-center gap-2">
+        <button type="button" id="dq-next" onClick=${next} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${daily.done >= DAILY_MAX || due.length === 0 ? "Terminer" : "Suivante →"}</button>
+        <button type="button" id="dq-flag" onClick=${flag} disabled=${flagged} class="mono text-xs px-3 py-2 text-dim hover:text-txt disabled:opacity-70">${flagged ? "✓ Question écartée" : "Question fausse ou mal posée"}</button>
+      </div>`}
+    </div>
+  </section>`;
 }
 
 function Root() {
