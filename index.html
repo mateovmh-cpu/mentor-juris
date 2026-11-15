@@ -1044,7 +1044,270 @@ async function askJson(sample, prompt, signal) {
 }
 ERRORS.bad_code = "Code d'accès invalide. Relancez pour le saisir à nouveau.";
 ERRORS.network = "Connexion impossible. Vérifiez votre réseau puis relancez.";
-ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
+/* ===== Parcours d'accueil ===== */
+const MJ_FORM = "https://formspree.io/f/xeagaqaa";
+const NIVEAUX = ["L1", "L2", "L3", "M1", "M2", "Prépa CRFPA", "Autre"];
+const SUGGESTIONS = {
+  "L1": ["Introduction au droit", "Droit constitutionnel", "Droit civil : personnes et famille", "Histoire du droit", "Institutions juridictionnelles", "Institutions européennes"],
+  "L2": ["Droit des contrats", "Responsabilité civile", "Droit administratif", "Droit pénal général", "Droit des biens", "Droit de l'Union européenne"],
+  "L3": ["Droit des sûretés", "Procédure civile", "Droit des sociétés", "Droit du travail", "Droit pénal spécial", "Libertés fondamentales", "Droit international privé"],
+  "M1": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "M2": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "Prépa CRFPA": ["Note de synthèse", "Grand oral", "Procédure civile", "Procédure pénale", "Droit des obligations", "Libertés fondamentales", "Droit des sociétés"],
+  "Autre": []
+};
+const OBJECTIFS = ["Valider mes matières (10)", "Viser un 12", "Viser 14 ou plus"];
+const RYTHMES = ["1 h par jour", "2 h par jour", "3 h par jour ou plus"];
+const OINPUT = "w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-line2";
+const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
+
+function OChip({ on, onClick, children }) {
+  return html`<button type="button" onClick=${onClick} aria-pressed=${on}
+    class=${`px-3 py-1.5 rounded-full border text-xs text-left ${on ? "text-txt" : "text-muted border-line"}`}
+    style=${on ? { background: "var(--brass-soft)", borderColor: "var(--brass)" } : {}}>${children}</button>`;
+}
+
+function applyProfileContext(p) {
+  const ctx = ` Contexte de l'étudiant : prénom ${p.prenom}, niveau ${p.niveau}, matières : ${p.matieres.join(", ")}. Objectif : ${p.objectif}. Rythme de révision : ${p.rythme}. Appelle-le par son prénom et adapte l'exigence à son niveau.`;
+  for (const m of Object.values(MENTORS)) {
+    if (!m.prompt) continue;
+    if (m.base === undefined) m.base = m.prompt;
+    m.prompt = m.base + ctx;
+  }
+}
+
+function Onboarding({ onDone }) {
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [code, setCode] = useState(() => store.get("mj_code", ""));
+  const [prenom, setPrenom] = useState("");
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [niveau, setNiveau] = useState("");
+  const [matieres, setMatieres] = useState([]);
+  const [custom, setCustom] = useState("");
+  const [rows, setRows] = useState([]);
+  const [mentor, setMentor] = useState("marlowe");
+  const [objectif, setObjectif] = useState(OBJECTIFS[0]);
+  const [rythme, setRythme] = useState(RYTHMES[1]);
+
+  useEffect(() => { setErr(""); }, [code, prenom, email, consent, niveau, matieres, rows]);
+
+  const toggleMatiere = (m) => setMatieres((xs) => xs.includes(m) ? xs.filter((x) => x !== m) : [...xs, m]);
+  const addCustom = () => {
+    const m = clean(custom, 50);
+    if (m && !matieres.includes(m)) setMatieres((xs) => [...xs, m]);
+    setCustom("");
+  };
+  const setRow = (id, patch) => setRows((rs) => rs.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const syncRows = () => setRows((rs) => {
+    const kept = rs.filter((r) => matieres.includes(r.matiere));
+    const have = new Set(kept.map((r) => r.matiere));
+    const added = matieres.filter((m) => !have.has(m)).map((m) => ({ id: uid(), matiere: m, type: "partiel", date: "" }));
+    return [...kept, ...added];
+  });
+
+  async function checkCode() {
+    let r;
+    try {
+      // Un texte vide est refusé avec un 400 uniquement si le code est bon (sinon 401).
+      r = await fetch("/api/corriger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "", code: code.trim() }) });
+    } catch { return "network"; }
+    if (r.status === 401) return "bad";
+    if (r.status === 400) return "ok";
+    return "error";
+  }
+
+  async function next() {
+    setErr("");
+    if (step === 0) {
+      if (!code.trim()) return setErr("Entre le code d'accès qu'on t'a donné.");
+      if (!clean(prenom, 30)) return setErr("Dis-moi comment je dois t'appeler.");
+      if (email.trim()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr("Cette adresse e-mail n'a pas l'air valide.");
+        if (!consent) return setErr("Coche la case pour recevoir des nouvelles, ou laisse l'e-mail vide.");
+      }
+      setBusy(true);
+      const res = await checkCode();
+      setBusy(false);
+      if (res === "bad") return setErr("Code d'accès invalide.");
+      if (res === "network") return setErr("Connexion impossible. Vérifie ton réseau et réessaie.");
+      if (res !== "ok") return setErr("Impossible de vérifier le code pour le moment. Réessaie dans un instant.");
+      store.set("mj_code", code.trim());
+      return setStep(1);
+    }
+    if (step === 1) {
+      if (!niveau) return setErr("Choisis ton niveau.");
+      if (!matieres.length) return setErr("Choisis au moins une matière.");
+      syncRows();
+      return setStep(2);
+    }
+    if (step === 2) {
+      if (rows.some((r) => r.date && r.date < TODAY)) return setErr("Une des dates est déjà passée. Corrige-la ou laisse-la vide.");
+      return setStep(3);
+    }
+    return finish();
+  }
+
+  function finish() {
+    const dated = rows.filter((r) => r.date);
+    const items = dated.map((r) => ({ id: uid(), date: r.date, title: (r.type === "partiel" ? "Partiel — " : "Rendu — ") + r.matiere, type: r.type, matiere: r.matiere, done: false }));
+    const nextOne = [...dated].sort((a, b) => a.date.localeCompare(b.date))[0];
+    const first = nextOne ? nextOne.matiere : matieres[0];
+    items.push({ id: uid(), date: TODAY, title: "Ficher un arrêt clé : " + first, type: "tache", matiere: first, done: false });
+    const profile = { prenom: clean(prenom, 30), niveau, matieres, objectif, rythme, mentor, createdAt: TODAY };
+    if (email.trim() && consent) {
+      const fd = new FormData();
+      fd.append("email", email.trim()); fd.append("niveau", niveau); fd.append("source", "app"); fd.append("consentement", "oui");
+      fetch(MJ_FORM, { method: "POST", headers: { Accept: "application/json" }, body: fd }).catch(() => {});
+    }
+    store.set("mj_items", items);
+    store.set("mj_mentor", mentor);
+    store.set("mj_profile", profile);
+    onDone(profile);
+  }
+
+  const titles = ["Bienvenue", "Ton cursus", "Tes échéances", "Ton mentor"];
+  const subs = [
+    "Quatre questions, deux minutes. Ensuite, le mentor te dit quoi faire dès aujourd'hui.",
+    "Pour adapter l'exigence et les exercices à ton niveau.",
+    "Sans dates, le mentor ne peut pas te donner d'ordre du jour. Tu peux en ajouter d'autres plus tard.",
+    "Le ton change, pas l'exigence. Tu pourras en changer à tout moment."
+  ];
+
+  return html`<div class="min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
+    <div class="w-full max-w-xl flex flex-col gap-5">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+          <span class="display font-medium tracking-tight">Mentor Juris</span>
+        </div>
+        <span class="mono text-xs text-dim">Étape ${step + 1} sur 4</span>
+      </div>
+      <div class="flex gap-1.5" aria-hidden="true">
+        ${[0, 1, 2, 3].map((i) => html`<span key=${i} class="h-1 flex-1 rounded-full" style=${{ background: i <= step ? "var(--brass)" : "var(--panel-2)" }}></span>`)}
+      </div>
+
+      <div class="rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-1">
+          <h1 class="display text-2xl leading-tight">${titles[step]}</h1>
+          <p class="text-muted text-sm">${subs[step]}</p>
+        </div>
+
+        ${step === 0 && html`<div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-code">Code d'accès de la bêta</label>
+            <input id="ob-code" type="password" autoComplete="off" value=${code} onInput=${(e) => setCode(e.target.value)} class=${OINPUT} placeholder="Le code qu'on t'a donné" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-prenom">Ton prénom</label>
+            <input id="ob-prenom" type="text" autoComplete="given-name" value=${prenom} onInput=${(e) => setPrenom(e.target.value)} class=${OINPUT} placeholder="Comment le mentor doit t'appeler" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-email">E-mail (facultatif)</label>
+            <input id="ob-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} placeholder="Pour être prévenu des nouveautés" />
+            ${email.trim() && html`<label class="flex gap-2.5 items-start text-xs text-muted">
+              <input type="checkbox" checked=${consent} onChange=${(e) => setConsent(e.target.checked)} class="mt-0.5" style=${{ accentColor: "var(--brass)" }} />
+              <span>J'accepte de recevoir des e-mails sur Mentor Juris. Je peux me désinscrire à tout moment.</span></label>`}
+          </div>
+          <p class="text-xs text-dim">Les textes que tu soumets sont traités par une IA (Anthropic). L'IA peut se tromper : vérifie toujours les références. <a href="/landing.html#confidentialite" target="_blank" rel="noopener" class="underline" style=${{ color: "var(--brass)" }}>Confidentialité</a></p>
+        </div>`}
+
+        ${step === 1 && html`<div class="flex flex-col gap-5">
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton niveau</span>
+            <div class="flex flex-wrap gap-2">${NIVEAUX.map((n) => html`<${OChip} key=${n} on=${niveau === n} onClick=${() => setNiveau(n)}>${n}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Tes matières ce semestre</span>
+            <div class="flex flex-wrap gap-2">
+              ${(SUGGESTIONS[niveau] || []).map((m) => html`<${OChip} key=${m} on=${matieres.includes(m)} onClick=${() => toggleMatiere(m)}>${m}<//>`)}
+              ${matieres.filter((m) => !(SUGGESTIONS[niveau] || []).includes(m)).map((m) => html`<${OChip} key=${m} on=${true} onClick=${() => toggleMatiere(m)}>${m} ✕<//>`)}
+            </div>
+            ${!niveau && html`<p class="text-xs text-dim">Choisis d'abord ton niveau pour voir des suggestions.</p>`}
+            <div class="flex gap-2">
+              <input type="text" value=${custom} onInput=${(e) => setCustom(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
+                class=${OINPUT} placeholder="Ajouter une autre matière" aria-label="Ajouter une autre matière" />
+              <button type="button" onClick=${addCustom} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
+            </div>
+          </div>
+        </div>`}
+
+        ${step === 2 && html`<div class="flex flex-col gap-3">
+          ${rows.map((r) => html`<div key=${r.id} class="grid gap-2 rounded-xl border border-line p-3" style=${{ background: "var(--panel-2)" }}>
+            <div class="flex gap-2 items-center">
+              <select value=${r.matiere} onChange=${(e) => setRow(r.id, { matiere: e.target.value })} aria-label="Matière" class="flex-1 min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                ${matieres.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+              </select>
+              <button type="button" onClick=${() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label="Supprimer cette échéance" class="mono text-xs text-dim hover:text-red px-2 py-2">✕</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select value=${r.type} onChange=${(e) => setRow(r.id, { type: e.target.value })} aria-label="Type d'échéance" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                <option value="partiel">Partiel / examen</option>
+                <option value="td">Rendu de TD / galop</option>
+              </select>
+              <input type="date" value=${r.date} min=${TODAY} onInput=${(e) => setRow(r.id, { date: e.target.value })} aria-label="Date" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none" />
+            </div>
+          </div>`)}
+          <button type="button" onClick=${() => setRows((rs) => [...rs, { id: uid(), matiere: matieres[0], type: "partiel", date: "" }])}
+            class="mono text-xs py-2 px-4 rounded-lg border border-line text-muted hover:text-txt w-fit">+ Ajouter une échéance</button>
+          <p class="text-xs text-dim">Laisse la date vide si tu ne la connais pas encore.</p>
+        </div>`}
+
+        ${step === 3 && html`<div class="flex flex-col gap-5">
+          <div class="grid gap-2.5">
+            ${Object.entries(MENTORS).map(([k, m]) => html`<button key=${k} type="button" disabled=${m.pro} onClick=${() => setMentor(k)} aria-pressed=${mentor === k}
+              class="text-left rounded-xl border p-3.5 flex gap-3 items-start disabled:opacity-50"
+              style=${mentor === k ? { borderColor: "var(--brass)", background: "var(--brass-soft)" } : { borderColor: "var(--line)" }}>
+              <${Avatar} mentor=${m} size=${34} />
+              <span class="flex flex-col gap-0.5 min-w-0">
+                <span class="text-sm font-medium">${m.name} ${m.pro ? html`<span class="mono text-[10px] text-dim ml-1">Pro · bientôt</span>` : ""}</span>
+                <span class="text-xs text-muted">${m.tag}</span>
+                <span class="text-xs text-muted">${m.desc}</span>
+                <span class="text-xs text-dim italic mt-1">${m.quote}</span>
+              </span></button>`)}
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton objectif</span>
+            <div class="flex flex-wrap gap-2">${OBJECTIFS.map((o) => html`<${OChip} key=${o} on=${objectif === o} onClick=${() => setObjectif(o)}>${o}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton temps de révision</span>
+            <div class="flex flex-wrap gap-2">${RYTHMES.map((o) => html`<${OChip} key=${o} on=${rythme === o} onClick=${() => setRythme(o)}>${o}<//>`)}</div>
+          </div>
+        </div>`}
+
+        ${err && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${err}</div>`}
+
+        <div class="flex items-center justify-between pt-1">
+          ${step > 0 ? html`<button type="button" onClick=${() => { setErr(""); setStep(step - 1); }} class="mono text-xs text-muted hover:text-txt px-2 py-2">← Retour</button>` : html`<span></span>`}
+          <button type="button" onClick=${next} disabled=${busy}
+            class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${busy && html`<${Spinner} />`} ${step === 3 ? "Commencer" : "Continuer"}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function Root() {
+  const [profile, setProfile] = useState(() => store.get("mj_profile", null));
+  if (!profile || !Array.isArray(profile.matieres)) return html`<${Onboarding} onDone=${setProfile} />`;
+  applyProfileContext(profile);
+  const reset = () => {
+    if (!confirm("Refaire la configuration ? Ton calendrier actuel sera remplacé.")) return;
+    store.set("mj_profile", null);
+    store.set("mj_items", []);
+    setProfile(null);
+  };
+  return html`<${React.Fragment}>
+    <${App} />
+    <button onClick=${reset} class="fixed bottom-3 right-3 z-40 mono text-[11px] px-2.5 py-1.5 rounded-lg border border-line text-dim hover:text-muted" style=${{ background: "var(--ink)" }}>Refaire la configuration</button>
+  <//>`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${Root} />`);
 </script>
 </body>
 </html>
