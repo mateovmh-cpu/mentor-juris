@@ -1012,7 +1012,7 @@ function App() {
   </div>`;
 }
 
-async function askJson(sample, prompt, signal) {
+async function askJson(sample, prompt, signal, model) {
   let code = store.get("mj_code", "");
   if (!code) {
     code = (window.prompt("Code d'accès Mentor Juris :") || "").trim();
@@ -1024,7 +1024,7 @@ async function askJson(sample, prompt, signal) {
     r = await fetch("/api/corriger", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, code }),
+      body: JSON.stringify({ prompt, code, model }),
       signal
     });
   } catch { throw { code: "network" }; }
@@ -1059,7 +1059,7 @@ const OINPUT = "w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 text-
 const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
 
 /* ---- Cours par matière ---- */
-const COURS_CAP = 60000;
+const COURS_CAP = 250000;
 const getCours = () => store.get("mj_cours", {});
 function saveCours(obj) {
   try { localStorage.setItem("mj_cours", JSON.stringify(obj)); return true; } catch { return false; }
@@ -1075,16 +1075,51 @@ function chunkText(t, size = 12000) {
   }
   return out;
 }
-async function analyzeCours(matiere, notes, onProgress) {
-  const chunks = chunkText(notes.slice(0, COURS_CAP));
-  const acc = { plan: [], notions: [], arrets: [] };
-  for (let i = 0; i < chunks.length; i++) {
-    if (onProgress) onProgress(i + 1, chunks.length);
-    const data = await askJson(null, `Voici ${chunks.length > 1 ? `la partie ${i + 1} sur ${chunks.length} des` : "les"} notes de cours d'un étudiant en droit, matière : ${matiere}. Extrais-en uniquement ce qui y figure, sans rien ajouter de ton cru.
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function askRetry(prompt, model) {
+  const waits = window.MJ_RETRY_MS || [5000, 10000, 20000, 30000, 45000];
+  for (let k = 0; ; k++) {
+    try { return await askJson(null, prompt, undefined, model); }
+    catch (e) {
+      if (e && e.code === "rate_limited" && k < waits.length) { await sleep(waits[k]); continue; }
+      throw e;
+    }
+  }
+}
+async function analyzeChunk(matiere, chunk, i, n) {
+  const prompt = `Voici ${n > 1 ? `la partie ${i + 1} sur ${n} des` : "les"} notes de cours d'un étudiant en droit, matière : ${matiere}. Extrais-en uniquement ce qui y figure, sans rien ajouter de ton cru.
 Réponds uniquement en JSON valide :
 {"plan":["intitulé de chapitre ou de partie (8 au maximum)"],"notions":["notion clé (8 au maximum)"],"arrets":["arrêt ou texte cité, avec sa date (8 au maximum)"]}
 NOTES :
-${chunks[i]}`);
+${chunk}`;
+  try { return await askRetry(prompt, "claude-haiku-5-5"); }
+  catch (e) {
+    if (e && (e.code === "failed" || e.code === "invalid_json")) return await askRetry(prompt);
+    throw e;
+  }
+}
+async function analyzeCours(matiere, notes, onProgress) {
+  const chunks = chunkText(notes.slice(0, COURS_CAP));
+  const results = new Array(chunks.length).fill(null);
+  let next = 0, done = 0, skipped = 0, fatal = null;
+  const worker = async () => {
+    while (!fatal) {
+      const i = next++;
+      if (i >= chunks.length) return;
+      try { results[i] = await analyzeChunk(matiere, chunks[i], i, chunks.length); }
+      catch (e) {
+        if (e && e.code === "invalid_json") skipped++;
+        else { fatal = e || { code: "failed" }; return; }
+      }
+      done++;
+      if (onProgress) onProgress(done, chunks.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, chunks.length) }, worker));
+  if (fatal) throw fatal;
+  const acc = { plan: [], notions: [], arrets: [] };
+  for (const data of results) {
+    if (!data) continue;
     for (const k of ["plan", "notions", "arrets"]) {
       for (const v of (Array.isArray(data[k]) ? data[k] : [])) {
         const s = clean(v, 120);
@@ -1092,19 +1127,21 @@ ${chunks[i]}`);
       }
     }
   }
-  for (const k of Object.keys(acc)) acc[k] = acc[k].slice(0, 14);
-  return acc;
+  for (const k of Object.keys(acc)) acc[k] = acc[k].slice(0, 60);
+  if (!acc.plan.length && !acc.notions.length && !acc.arrets.length) throw { code: "invalid_json" };
+  return { digest: acc, skipped };
 }
 function coursContext() {
-  const parts = [];
-  for (const [m, v] of Object.entries(getCours())) {
-    const d = v && v.digest;
-    if (!d) continue;
-    const L = (a) => (a || []).slice(0, 10).join(" ; ");
-    parts.push(`${m} — plan : ${L(d.plan)}. Notions : ${L(d.notions)}. Arrêts : ${L(d.arrets)}.`);
-  }
-  const s = parts.join(" | ").slice(0, 5000);
-  return s ? ` Éléments extraits des cours de l'étudiant (à utiliser quand c'est pertinent, sans en déduire autre chose) : ${s}` : "";
+  const entries = Object.entries(getCours()).filter(([, v]) => v && v.digest);
+  if (!entries.length) return "";
+  const budget = Math.floor(5000 / entries.length);
+  const L = (a, n) => {
+    let s = "";
+    for (const x of a || []) { if ((s + " ; " + x).length > n) break; s += (s ? " ; " : "") + x; }
+    return s;
+  };
+  const parts = entries.map(([m, v]) => `${m} — plan : ${L(v.digest.plan, budget * 0.45)}. Notions : ${L(v.digest.notions, budget * 0.25)}. Arrêts : ${L(v.digest.arrets, budget * 0.25)}.`);
+  return ` Éléments extraits des cours de l'étudiant (à utiliser quand c'est pertinent, sans en déduire autre chose) : ${parts.join(" | ")}`;
 }
 const refreshContext = () => {
   const p = store.get("mj_profile", null);
@@ -1379,8 +1416,8 @@ function MesCours({ setItems }) {
     return true;
   };
   const setNotesFor = (m, text) => {
-    const tooLong = text.length > COURS_CAP;
-    if (update(m, { notes: text.slice(0, COURS_CAP) }) && tooLong) setMsg(`Notes tronquées à ${COURS_CAP.toLocaleString("fr-FR")} caractères.`);
+    const over = text.length - COURS_CAP;
+    if (update(m, { notes: text.slice(0, COURS_CAP) }) && over > 0) setMsg(`Ton cours est très long : seuls les ${COURS_CAP.toLocaleString("fr-FR")} premiers caractères sont gardés (${over.toLocaleString("fr-FR")} ignorés). Pour la suite, crée une matière du type « ${m} (suite) ».`);
   };
   const importFile = (m, file) => {
     if (!file) return;
@@ -1396,14 +1433,14 @@ function MesCours({ setItems }) {
     if (!c || !c.notes.trim()) return;
     setBusy(m); setMsg("");
     try {
-      const digest = await analyzeCours(m, c.notes, (i, n) => setProg(n > 1 ? `${i}/${n}` : ""));
-      update(m, { digest, analyzedLen: c.notes.length });
+      const { digest, skipped } = await analyzeCours(m, c.notes, (i, n) => setProg(n > 1 ? `${i}/${n}` : ""));
+      update(m, { digest, skipped, analyzedLen: c.notes.length });
       if (setItems) setItems((xs) => xs.map((i) => i.go === "cours" && i.matiere === m && !i.done ? { ...i, done: true, doneOn: TODAY } : i));
     } catch (e) {
       setMsg(errorText(e));
     } finally { setBusy(""); setProg(""); }
   };
-  const clear = (m) => { if (confirm("Vider les notes et l'analyse de « " + m + " » ?")) update(m, { notes: "", digest: undefined, analyzedLen: undefined }); };
+  const clear = (m) => { if (confirm("Vider les notes et l'analyse de « " + m + " » ?")) update(m, { notes: "", digest: undefined, skipped: undefined, analyzedLen: undefined }); };
   const addMatiere = () => {
     const m = clean(extra, 50);
     if (m && !matieres.includes(m)) update(m, { notes: "" });
@@ -1436,6 +1473,7 @@ function MesCours({ setItems }) {
           ${n > 0 && html`<button type="button" onClick=${() => clear(m)} class="mono text-xs px-3 py-2 text-dim hover:text-red">Vider</button>`}
         </div>
         ${stale && html`<p class="text-xs text-dim">Tes notes ont changé depuis la dernière analyse.</p>`}
+        ${d && c.skipped > 0 && html`<p class="text-xs text-dim">${c.skipped} partie(s) du cours n'ont pas pu être analysées. Relance l'analyse pour réessayer.</p>`}
         ${d && html`<div class="rounded-xl border border-line p-3 text-xs flex flex-col gap-1.5" style=${{ background: "var(--panel-2)" }}>
           <div class="eyebrow">Ce que le mentor a retenu · vérifie que c'est exact</div>
           ${[["Plan", "plan"], ["Notions", "notions"], ["Arrêts", "arrets"]].map(([l, k]) => (d[k] || []).length ? html`<div key=${k}><span class="text-muted">${l} : </span>${d[k].join(" · ")}</div>` : null)}
