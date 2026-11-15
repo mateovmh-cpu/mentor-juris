@@ -87,8 +87,160 @@ const shortDate = (s) => fromIso(s).toLocaleDateString("fr-FR", { weekday: "shor
 
 const store = {
   get(k, f) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} sync.mark(k); }
 };
+
+/* ===== Comptes (Supabase, appels REST directs) ===== */
+const SB_URL = "https://quszlzddqwhmnrjihded.supabase.co";
+const SB_KEY = "sb_publishable_WdcG0rZi3lTWrmjq3dyS2A_bf7R0y2c";
+const SESSION_KEY = "mj_session";
+const SYNC_KEYS = ["mj_profile", "mj_items", "mj_cours", "mj_quiz", "mj_qbank", "mj_daily", "mj_mentor"];
+
+const auth = {
+  _refreshing: null,
+  session() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } },
+  save(d) {
+    const s = { access_token: d.access_token, refresh_token: d.refresh_token,
+      expires_at: d.expires_at || Math.floor(Date.now() / 1000) + (Number(d.expires_in) || 3600),
+      user: d.user ? { id: d.user.id, email: d.user.email } : (auth.session() || {}).user };
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch {}
+    return s;
+  },
+  clear() { try { localStorage.removeItem(SESSION_KEY); } catch {} },
+  async call(path, opts = {}) {
+    let r;
+    try { r = await fetch(SB_URL + path, { ...opts, headers: { apikey: SB_KEY, "Content-Type": "application/json", ...(opts.headers || {}) } }); }
+    catch { throw { code: "network" }; }
+    return r;
+  },
+  async signIn(email, password) {
+    const r = await auth.call("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase(), password }) });
+    if (r.status === 429) throw { code: "rate_limited" };
+    if (!r.ok) throw { code: r.status === 400 ? "bad_login" : "failed" };
+    return auth.save(await r.json());
+  },
+  async signUp(email, password, code) {
+    let r;
+    try { r = await fetch("/api/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, code }) }); }
+    catch { throw { code: "network" }; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw { code: e.error || "failed" }; }
+    return auth.signIn(email, password);
+  },
+  async recover(email) {
+    const to = encodeURIComponent(location.origin + location.pathname);
+    const r = await auth.call("/auth/v1/recover?redirect_to=" + to, { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase() }) });
+    if (r.status === 429) throw { code: "rate_limited" };
+    if (!r.ok) throw { code: "failed" };
+  },
+  async token() {
+    const s = auth.session();
+    if (!s) throw { code: "auth" };
+    if (s.expires_at * 1000 - Date.now() > 60000) return s.access_token;
+    if (!auth._refreshing) auth._refreshing = (async () => {
+      const r = await auth.call("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: s.refresh_token }) });
+      if (r.status === 400 || r.status === 401) { auth.clear(); throw { code: "auth" }; }
+      if (!r.ok) throw { code: "failed" };
+      return auth.save(await r.json()).access_token;
+    })().finally(() => { auth._refreshing = null; });
+    return auth._refreshing;
+  },
+  async setPassword(password, accessToken) {
+    const r = await auth.call("/auth/v1/user", { method: "PUT", headers: { Authorization: "Bearer " + (accessToken || await auth.token()) }, body: JSON.stringify({ password }) });
+    if (r.status === 422) throw { code: "same_password" };
+    if (!r.ok) throw { code: r.status === 401 ? "auth" : "failed" };
+  },
+  async signOut() {
+    await sync.flush().catch(() => {});
+    const s = auth.session();
+    if (s) auth.call("/auth/v1/logout", { method: "POST", headers: { Authorization: "Bearer " + s.access_token } }).catch(() => {});
+    wipeLocal();
+    location.replace(location.pathname);
+  },
+  async deleteAccount() {
+    const t = await auth.token();
+    let r;
+    try { r = await fetch("/api/supprimer-compte", { method: "POST", headers: { Authorization: "Bearer " + t } }); }
+    catch { throw { code: "network" }; }
+    if (!r.ok) throw { code: r.status === 401 ? "auth" : "failed" };
+    wipeLocal();
+    location.replace(location.pathname);
+  }
+};
+function wipeLocal() {
+  sync.ready = false; sync.last = {}; sync.dirty.clear();
+  for (const k of [...SYNC_KEYS, SESSION_KEY, "mj_code"]) { try { localStorage.removeItem(k); } catch {} }
+}
+
+const v_null = (raw) => raw === null || raw === undefined || raw === "null";
+const sync = {
+  ready: false, dirty: new Set(), timer: null, status: "ok", listeners: new Set(), last: {},
+  setStatus(s) { this.status = s; this.listeners.forEach((f) => f(s)); },
+  mark(k) {
+    if (!this.ready || !SYNC_KEYS.includes(k)) return;
+    let raw = null;
+    try { raw = localStorage.getItem(k); } catch {}
+    if (!this.dirty.has(k) && (v_null(raw) ? null : raw) === this.last[k]) return; // rien de neuf depuis la dernière synchro
+    this.dirty.add(k);
+    this.setStatus("pending");
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush().catch(() => {}), 1500);
+  },
+  async rest(path, opts = {}, keepalive) {
+    const t = await auth.token();
+    let r;
+    try { r = await fetch(SB_URL + "/rest/v1/" + path, { ...opts, keepalive: !!keepalive, headers: { apikey: SB_KEY, Authorization: "Bearer " + t, "Content-Type": "application/json", ...(opts.headers || {}) } }); }
+    catch { throw { code: "network" }; }
+    if (r.status === 401) throw { code: "auth" };
+    if (!r.ok) throw { code: "failed" };
+    return r;
+  },
+  async push(keys, keepalive) {
+    const uidUser = (auth.session() || {}).user?.id;
+    if (!uidUser || !keys.length) return;
+    const now = new Date().toISOString(), up = [], del = [], raws = {};
+    for (const k of keys) {
+      let v = null;
+      try { raws[k] = localStorage.getItem(k); v = JSON.parse(raws[k] || "null"); } catch {}
+      if (v === null || v === undefined) del.push(k); else up.push({ user_id: uidUser, k, v, updated_at: now });
+    }
+    const done = () => { for (const k of keys) this.last[k] = v_null(raws[k]) ? null : raws[k]; };
+    if (up.length) await this.rest("user_kv?on_conflict=user_id,k", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(up) }, keepalive);
+    if (del.length) await this.rest("user_kv?k=in.(" + del.join(",") + ")", { method: "DELETE", headers: { Prefer: "return=minimal" } }, keepalive);
+    done();
+  },
+  async flush(keepalive) {
+    clearTimeout(this.timer);
+    if (!this.ready || !this.dirty.size) return;
+    const keys = [...this.dirty];
+    this.dirty.clear();
+    this.setStatus("saving");
+    try { await this.push(keys, keepalive); this.setStatus(this.dirty.size ? "pending" : "ok"); }
+    catch (e) {
+      keys.forEach((k) => this.dirty.add(k));
+      this.setStatus(e.code === "auth" ? "auth" : "offline");
+      if (e.code !== "auth") this.timer = setTimeout(() => this.flush().catch(() => {}), 15000);
+      throw e;
+    }
+  },
+  // Connexion → récupération → affichage. Compte vide : on envoie les données locales.
+  async pull() {
+    const r = await this.rest("user_kv?select=k,v");
+    const rows = await r.json();
+    if (!rows.length) {
+      const local = SYNC_KEYS.filter((k) => { try { return JSON.parse(localStorage.getItem(k) || "null") !== null; } catch { return false; } });
+      await this.push(local);
+    } else {
+      const remote = Object.fromEntries(rows.map((x) => [x.k, x.v]));
+      for (const k of SYNC_KEYS) {
+        try { if (k in remote) localStorage.setItem(k, (this.last[k] = JSON.stringify(remote[k]))); else { localStorage.removeItem(k); this.last[k] = null; } } catch {}
+      }
+    }
+    this.ready = true;
+    this.setStatus("ok");
+  }
+};
+window.addEventListener("pagehide", () => { sync.flush(true).catch(() => {}); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") sync.flush(true).catch(() => {}); });
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 const TYPES = {
@@ -1018,22 +1170,17 @@ function App() {
 }
 
 async function askJson(sample, prompt, signal, model) {
-  let code = store.get("mj_code", "");
-  if (!code) {
-    code = (window.prompt("Code d'accès Mentor Juris :") || "").trim();
-    if (!code) throw { code: "bad_code" };
-    store.set("mj_code", code);
-  }
+  const token = await auth.token();
   let r;
   try {
     r = await fetch("/api/corriger", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt, code, model }),
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ prompt, model }),
       signal
     });
   } catch { throw { code: "network" }; }
-  if (r.status === 401) { store.set("mj_code", ""); throw { code: "bad_code" }; }
+  if (r.status === 401) throw { code: "auth" };
   if (r.status === 400) throw { code: "prompt_too_large" };
   if (r.status === 429) throw { code: "rate_limited" };
   if (!r.ok) throw { code: "failed" };
@@ -1044,7 +1191,7 @@ async function askJson(sample, prompt, signal, model) {
   if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch {} }
   throw { code: "invalid_json" };
 }
-ERRORS.bad_code = "Code d'accès invalide. Relancez pour le saisir à nouveau.";
+ERRORS.auth = "Ta session a expiré. Recharge la page pour te reconnecter.";
 ERRORS.network = "Connexion impossible. Vérifiez votre réseau puis relancez.";
 /* ===== Parcours d'accueil ===== */
 const MJ_FORM = "https://formspree.io/f/xeagaqaa";
@@ -1067,7 +1214,7 @@ const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0
 const COURS_CAP = 250000;
 const getCours = () => store.get("mj_cours", {});
 function saveCours(obj) {
-  try { localStorage.setItem("mj_cours", JSON.stringify(obj)); return true; } catch { return false; }
+  try { localStorage.setItem("mj_cours", JSON.stringify(obj)); sync.mark("mj_cours"); return true; } catch { return false; }
 }
 const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
 const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -1215,9 +1362,8 @@ function Onboarding({ onDone }) {
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [code, setCode] = useState(() => store.get("mj_code", ""));
   const [prenom, setPrenom] = useState("");
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => ((auth.session() || {}).user || {}).email || "");
   const [consent, setConsent] = useState(false);
   const [niveau, setNiveau] = useState("");
   const [matieres, setMatieres] = useState([]);
@@ -1228,7 +1374,7 @@ function Onboarding({ onDone }) {
   const [objectif, setObjectif] = useState(OBJECTIFS[0]);
   const [rythme, setRythme] = useState(RYTHMES[1]);
 
-  useEffect(() => { setErr(""); }, [code, prenom, email, consent, niveau, matieres, rows]);
+  useEffect(() => { setErr(""); }, [prenom, email, consent, niveau, matieres, rows]);
 
   const toggleMatiere = (m) => setMatieres((xs) => xs.includes(m) ? xs.filter((x) => x !== m) : [...xs, m]);
   const addCustom = () => {
@@ -1244,33 +1390,14 @@ function Onboarding({ onDone }) {
     return [...kept, ...added];
   });
 
-  async function checkCode() {
-    let r;
-    try {
-      // Un texte vide est refusé avec un 400 uniquement si le code est bon (sinon 401).
-      r = await fetch("/api/corriger", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: "", code: code.trim() }) });
-    } catch { return "network"; }
-    if (r.status === 401) return "bad";
-    if (r.status === 400) return "ok";
-    return "error";
-  }
-
   async function next() {
     setErr("");
     if (step === 0) {
-      if (!code.trim()) return setErr("Entre le code d'accès qu'on t'a donné.");
       if (!clean(prenom, 30)) return setErr("Dis-moi comment je dois t'appeler.");
       if (email.trim()) {
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr("Cette adresse e-mail n'a pas l'air valide.");
         if (!consent) return setErr("Coche la case pour recevoir des nouvelles, ou laisse l'e-mail vide.");
       }
-      setBusy(true);
-      const res = await checkCode();
-      setBusy(false);
-      if (res === "bad") return setErr("Code d'accès invalide.");
-      if (res === "network") return setErr("Connexion impossible. Vérifie ton réseau et réessaie.");
-      if (res !== "ok") return setErr("Impossible de vérifier le code pour le moment. Réessaie dans un instant.");
-      store.set("mj_code", code.trim());
       return setStep(1);
     }
     if (step === 1) {
@@ -1341,15 +1468,11 @@ function Onboarding({ onDone }) {
 
         ${step === 0 && html`<div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
-            <label class="eyebrow" htmlFor="ob-code">Code d'accès de la bêta</label>
-            <input id="ob-code" type="password" autoComplete="off" value=${code} onInput=${(e) => setCode(e.target.value)} class=${OINPUT} placeholder="Le code qu'on t'a donné" />
-          </div>
-          <div class="flex flex-col gap-1.5">
             <label class="eyebrow" htmlFor="ob-prenom">Ton prénom</label>
             <input id="ob-prenom" type="text" autoComplete="given-name" value=${prenom} onInput=${(e) => setPrenom(e.target.value)} class=${OINPUT} placeholder="Comment le mentor doit t'appeler" />
           </div>
           <div class="flex flex-col gap-1.5">
-            <label class="eyebrow" htmlFor="ob-email">E-mail (facultatif)</label>
+            <label class="eyebrow" htmlFor="ob-email">E-mail pour les nouveautés (facultatif)</label>
             <input id="ob-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} placeholder="Pour être prévenu des nouveautés" />
             ${email.trim() && html`<label class="flex gap-2.5 items-start text-xs text-muted">
               <input type="checkbox" checked=${consent} onChange=${(e) => setConsent(e.target.checked)} class="mt-0.5" style=${{ accentColor: "var(--brass)" }} />
@@ -1619,7 +1742,7 @@ function quizPrompt(matiere, chunk, q, plan) {
   return `Voici un extrait des notes de cours d'un étudiant en droit, matière : ${matiere}. Rédige ${q} question${q > 1 ? "s" : ""} à choix multiple pour tester sa compréhension, en t'appuyant uniquement sur cet extrait.
 Règles : 4 propositions dont une seule exacte ; les 3 autres sont plausibles mais fausses d'après l'extrait. Varie les types : notion à définir, petit cas concret à qualifier, solution d'un arrêt. Évite les détails sans enjeu. Ne pose aucune question dont la réponse ne figure pas dans l'extrait.
 "chapitre" : choisis dans cette liste l'intitulé le plus proche de la partie concernée, sinon formule-le en 6 mots au maximum : ${plan}
-"explication" : une phrase qui justifie la bonne réponse.
+"explication" : une seule phrase courte (25 mots maximum) qui justifie la bonne réponse par la règle de droit (article, principe) ou par l'arrêt qui la pose ; n'écris jamais « parce que le cours le dit » ni « selon le cours ».
 Réponds uniquement en JSON : [{"chapitre":"...","question":"...","choix":["...","...","...","..."],"bonne":0,"explication":"..."}] où "bonne" est l'indice (0 à 3) de la bonne proposition.
 EXTRAIT :
 ${chunk}`;
@@ -1962,9 +2085,190 @@ function DailyQuestion() {
   </section>`;
 }
 
+const AUTH_ERRORS = {
+  bad_login: "E-mail ou mot de passe incorrect.",
+  bad_code: "Code d'invitation invalide.",
+  email_exists: "Un compte existe déjà avec cet e-mail. Connecte-toi.",
+  weak_password: "Choisis un mot de passe d'au moins 8 caractères.",
+  invalid_email: "Cette adresse e-mail n'a pas l'air valide.",
+  same_password: "Choisis un mot de passe différent de l'ancien.",
+  rate_limited: "Trop de tentatives. Attends quelques minutes puis réessaie.",
+  network: "Connexion impossible. Vérifie ton réseau et réessaie.",
+  auth: "Le lien a expiré. Redemande un e-mail de réinitialisation."
+};
+const authErr = (e) => AUTH_ERRORS[e && e.code] || "Une erreur est survenue. Réessaie dans un instant.";
+
+function AuthShell({ title, sub, children }) {
+  return html`<div class="min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
+    <div class="w-full max-w-md flex flex-col gap-5">
+      <div class="flex items-center gap-2.5">
+        <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+        <span class="display font-medium tracking-tight">Mentor Juris</span>
+      </div>
+      <div class="rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-1">
+          <h1 class="display text-2xl leading-tight">${title}</h1>
+          ${sub && html`<p class="text-muted text-sm">${sub}</p>`}
+        </div>
+        ${children}
+      </div>
+    </div>
+  </div>`;
+}
+const BTN = "mono text-sm px-4 py-2.5 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-60 flex items-center justify-center gap-2";
+
+function AuthScreen({ onIn, notice }) {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState(notice || "");
+  const [busy, setBusy] = useState(false);
+  const go = (m) => { setMode(m); setErr(""); setInfo(""); };
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(""); setInfo("");
+    const mail = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return setErr(AUTH_ERRORS.invalid_email);
+    if (mode !== "forgot" && pw.length < (mode === "signup" ? 8 : 1)) return setErr(mode === "signup" ? AUTH_ERRORS.weak_password : "Entre ton mot de passe.");
+    if (mode === "signup" && !code.trim()) return setErr("Entre le code d'invitation qu'on t'a donné.");
+    setBusy(true);
+    try {
+      if (mode === "forgot") { await auth.recover(mail); setInfo("Si un compte existe pour cette adresse, un e-mail vient de partir. Ouvre le lien qu'il contient."); }
+      else { if (mode === "signup") await auth.signUp(mail, pw, code.trim()); else await auth.signIn(mail, pw); onIn(); }
+    } catch (x) { setErr(authErr(x)); }
+    setBusy(false);
+  }
+
+  const titles = { login: "Connexion", signup: "Créer ton compte", forgot: "Mot de passe oublié" };
+  const subs = { login: "Retrouve ton calendrier, tes cours et tes tests sur tous tes appareils.", signup: "L'accès se fait sur invitation pendant la bêta.", forgot: "Entre ton e-mail : tu recevras un lien pour choisir un nouveau mot de passe." };
+  return html`<${AuthShell} title=${titles[mode]} sub=${subs[mode]}>
+    <form onSubmit=${submit} class="flex flex-col gap-4" noValidate>
+      <div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-email">E-mail</label>
+        <input id="au-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} />
+      </div>
+      ${mode !== "forgot" && html`<div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-pw">Mot de passe</label>
+        <input id="au-pw" type="password" autoComplete=${mode === "signup" ? "new-password" : "current-password"} value=${pw} onInput=${(e) => setPw(e.target.value)} class=${OINPUT} placeholder=${mode === "signup" ? "8 caractères minimum" : ""} />
+      </div>`}
+      ${mode === "signup" && html`<div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-code">Code d'invitation</label>
+        <input id="au-code" type="password" autoComplete="off" value=${code} onInput=${(e) => setCode(e.target.value)} class=${OINPUT} placeholder="Le code qu'on t'a donné" />
+      </div>`}
+      ${err && html`<p id="au-err" class="text-sm" style=${{ color: "var(--red)" }}>${err}</p>`}
+      ${info && html`<p id="au-info" class="text-sm" style=${{ color: "var(--ok)" }}>${info}</p>`}
+      <button id="au-submit" type="submit" disabled=${busy} class=${BTN} style=${{ background: "var(--brass)" }}>
+        ${busy && html`<${Spinner} />`} ${mode === "login" ? "Se connecter" : mode === "signup" ? "Créer mon compte" : "Envoyer le lien"}</button>
+      <div class="flex flex-wrap justify-between gap-2 text-xs">
+        ${mode === "login"
+          ? html`<button type="button" id="au-to-signup" onClick=${() => go("signup")} class="text-muted hover:text-txt">J'ai un code d'invitation</button>
+                 <button type="button" id="au-to-forgot" onClick=${() => go("forgot")} class="text-muted hover:text-txt">Mot de passe oublié ?</button>`
+          : html`<button type="button" id="au-to-login" onClick=${() => go("login")} class="text-muted hover:text-txt">← J'ai déjà un compte</button>`}
+      </div>
+      ${mode === "signup" && html`<p class="text-xs text-dim">Ton compte et tes données sont hébergés dans l'Union européenne (Supabase, Paris). Les textes que tu soumets sont traités par une IA (Anthropic). Tu peux supprimer ton compte à tout moment. <a href="/landing.html#confidentialite" target="_blank" rel="noopener" class="underline" style=${{ color: "var(--brass)" }}>Confidentialité</a></p>`}
+    </form>
+  <//>`;
+}
+
+function readRecovery() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (h.get("error_code") || h.get("error")) { history.replaceState(null, "", location.pathname); return { error: true }; }
+  if (h.get("type") === "recovery" && h.get("access_token")) {
+    history.replaceState(null, "", location.pathname);
+    return { access_token: h.get("access_token"), refresh_token: h.get("refresh_token"), expires_in: h.get("expires_in"), expires_at: Number(h.get("expires_at")) || undefined };
+  }
+  return null;
+}
+
+function NewPassword({ rec, onDone }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    if (pw.length < 8) return setErr(AUTH_ERRORS.weak_password);
+    setBusy(true); setErr("");
+    try {
+      await auth.setPassword(pw, rec.access_token);
+      const r = await auth.call("/auth/v1/user", { headers: { Authorization: "Bearer " + rec.access_token } });
+      const user = r.ok ? await r.json() : null;
+      wipeLocal();
+      auth.save({ ...rec, user });
+      onDone();
+    } catch (x) { setErr(authErr(x)); setBusy(false); }
+  }
+  return html`<${AuthShell} title="Nouveau mot de passe" sub="Choisis ton nouveau mot de passe. Tu resteras connecté sur cet appareil.">
+    <form onSubmit=${submit} class="flex flex-col gap-4" noValidate>
+      <div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="np-pw">Nouveau mot de passe</label>
+        <input id="np-pw" type="password" autoComplete="new-password" value=${pw} onInput=${(e) => setPw(e.target.value)} class=${OINPUT} placeholder="8 caractères minimum" />
+      </div>
+      ${err && html`<p class="text-sm" style=${{ color: "var(--red)" }}>${err}</p>`}
+      <button id="np-submit" type="submit" disabled=${busy} class=${BTN} style=${{ background: "var(--brass)" }}>${busy && html`<${Spinner} />`} Enregistrer</button>
+    </form>
+  <//>`;
+}
+
+const SYNC_LABEL = { ok: "Synchronisé", pending: "Modifications en attente…", saving: "Enregistrement…", offline: "Hors ligne : nouvel essai automatique", auth: "Session expirée : recharge la page" };
+function AccountMenu({ onReset }) {
+  const [open, setOpen] = useState(false);
+  const [st, setSt] = useState(sync.status);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { sync.listeners.add(setSt); return () => sync.listeners.delete(setSt); }, []);
+  const email = ((auth.session() || {}).user || {}).email || "";
+  const dot = st === "ok" ? "var(--ok)" : st === "offline" || st === "auth" ? "var(--red)" : "var(--brass)";
+  async function del() {
+    const t = window.prompt("Suppression définitive du compte et de toutes tes données (calendrier, cours, tests). Tape SUPPRIMER pour confirmer :");
+    if ((t || "").trim().toUpperCase() !== "SUPPRIMER") return;
+    setBusy(true); setErr("");
+    try { await auth.deleteAccount(); } catch (x) { setErr(x.code === "auth" ? SYNC_LABEL.auth : "La suppression a échoué. Réessaie ou écris à mentorjuris.contact@gmail.com."); setBusy(false); }
+  }
+  return html`<div class="fixed bottom-3 right-3 z-40 flex flex-col items-end gap-2">
+    ${open && html`<div id="acct-panel" class="w-72 rounded-xl border border-line p-4 flex flex-col gap-3 text-sm" style=${{ background: "var(--panel)" }}>
+      <div class="flex flex-col gap-0.5">
+        <span class="eyebrow">Compte</span>
+        <span class="truncate">${email}</span>
+        <span id="acct-sync" class="text-xs text-muted flex items-center gap-1.5"><span class="sq" style=${{ background: dot }}></span>${SYNC_LABEL[st]}</span>
+      </div>
+      <button type="button" onClick=${() => { setOpen(false); onReset(); }} class="text-left text-muted hover:text-txt">Refaire la configuration</button>
+      <button type="button" id="acct-logout" disabled=${busy} onClick=${() => { setBusy(true); auth.signOut(); }} class="text-left text-muted hover:text-txt">Se déconnecter</button>
+      <button type="button" id="acct-delete" disabled=${busy} onClick=${del} class="text-left hover:brightness-110" style=${{ color: "var(--red)" }}>Supprimer mon compte</button>
+      ${err && html`<p class="text-xs" style=${{ color: "var(--red)" }}>${err}</p>`}
+    </div>`}
+    <button id="acct-btn" type="button" onClick=${() => setOpen((o) => !o)} aria-expanded=${open} class="mono text-[11px] px-2.5 py-1.5 rounded-lg border border-line text-dim hover:text-muted flex items-center gap-1.5" style=${{ background: "var(--ink)" }}>
+      <span class="sq" style=${{ background: dot }}></span>Compte</button>
+  </div>`;
+}
+
 function Root() {
-  const [profile, setProfile] = useState(() => store.get("mj_profile", null));
-  if (!profile || !Array.isArray(profile.matieres)) return html`<${Onboarding} onDone=${setProfile} />`;
+  const [rec] = useState(readRecovery);
+  const [phase, setPhase] = useState(() => rec && rec.access_token ? "recovery" : auth.session() ? "loading" : "auth");
+  const [profile, setProfile] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
+
+  useEffect(() => {
+    if (phase !== "loading") return;
+    setLoadErr("");
+    sync.pull().then(() => { setProfile(store.get("mj_profile", null)); setPhase("app"); })
+      .catch((e) => { if (e.code === "auth") { wipeLocal(); setPhase("auth"); } else setLoadErr(e.code === "network" ? AUTH_ERRORS.network : "Impossible de récupérer tes données pour le moment."); });
+  }, [phase]);
+
+  if (phase === "recovery") return html`<${NewPassword} rec=${rec} onDone=${() => setPhase("loading")} />`;
+  if (phase === "auth") return html`<${AuthScreen} onIn=${() => setPhase("loading")} notice=${rec && rec.error ? "Ce lien a expiré ou a déjà servi. Redemande un e-mail depuis « Mot de passe oublié »." : ""} />`;
+  if (phase === "loading") return html`<div class="min-h-screen grid place-items-center px-4">
+    ${loadErr
+      ? html`<div class="flex flex-col items-center gap-3 text-sm text-center"><p class="text-muted">${loadErr}</p>
+          <div class="flex gap-2"><button type="button" onClick=${() => { setPhase("x"); setTimeout(() => setPhase("loading")); }} class=${BTN} style=${{ background: "var(--brass)" }}>Réessayer</button>
+          <button type="button" onClick=${() => auth.signOut()} class="mono text-sm px-4 py-2.5 text-muted hover:text-txt">Se déconnecter</button></div></div>`
+      : html`<div class="flex items-center gap-2 text-muted text-sm"><${Spinner} /> Récupération de tes données…</div>`}
+  </div>`;
+  if (phase !== "app") return null;
+
+  if (!profile || !Array.isArray(profile.matieres)) return html`<${React.Fragment}><${Onboarding} onDone=${setProfile} /><${AccountMenu} onReset=${() => {}} /><//>`;
   applyProfileContext(profile);
   const reset = () => {
     if (!confirm("Refaire la configuration ? Ton calendrier actuel sera remplacé. Tes notes de cours sont conservées.")) return;
@@ -1974,7 +2278,7 @@ function Root() {
   };
   return html`<${React.Fragment}>
     <${App} />
-    <button onClick=${reset} class="fixed bottom-3 right-3 z-40 mono text-[11px] px-2.5 py-1.5 rounded-lg border border-line text-dim hover:text-muted" style=${{ background: "var(--ink)" }}>Refaire la configuration</button>
+    <${AccountMenu} onReset=${reset} />
   <//>`;
 }
 
