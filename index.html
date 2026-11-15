@@ -788,7 +788,10 @@ STATISTIQUES : ${words} mots, ${exits} sorties de page détectées.
 Réponds uniquement en JSON valide :
 {"note":15.5,"appreciation":"string","points_forts":["string"],"points_a_corriger":["string"]}`);
       setResult({ ...data, words, exits });
-    } catch {
+    } catch (e) {
+      setActive(true);
+      window.alert(errorText(e) + " Votre copie est conservée : cliquez de nouveau sur « Rendre la copie ».");
+      return;
       setResult({
         note: 11.0,
         appreciation: "Copie honorable mais la structure de l'introduction pèche par manque de précision sur la qualification juridique.",
