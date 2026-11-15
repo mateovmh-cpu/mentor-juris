@@ -1064,6 +1064,49 @@ const getCours = () => store.get("mj_cours", {});
 function saveCours(obj) {
   try { localStorage.setItem("mj_cours", JSON.stringify(obj)); return true; } catch { return false; }
 }
+const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const MAMMOTH_SRC = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+const MAX_FILE = 30 * 1024 * 1024;
+const FILE_ACCEPT = ".pdf,.docx,.txt,.md,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const loadScript = (src) => new Promise((res, rej) => {
+  const s = document.createElement("script");
+  s.src = src; s.onload = res; s.onerror = () => rej({ code: "lib" });
+  document.head.appendChild(s);
+});
+async function readPdf(file) {
+  if (!window.pdfjsLib) await loadScript(PDFJS_SRC);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  let out = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    for (const it of tc.items) out += it.str + (it.hasEOL ? "\n" : "");
+    out += "\n\n";
+  }
+  if (out.replace(/\s/g, "").length < pdf.numPages * 80) throw { code: "scan" };
+  return out;
+}
+async function readDocx(file) {
+  if (!window.mammoth) await loadScript(MAMMOTH_SRC);
+  const r = await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+  return r.value || "";
+}
+async function readFileText(file) {
+  const name = (file.name || "").toLowerCase();
+  if (file.size > MAX_FILE) throw { code: "big" };
+  if (name.endsWith(".pdf") || file.type === "application/pdf") return readPdf(file);
+  if (name.endsWith(".docx")) return readDocx(file);
+  if (name.endsWith(".txt") || name.endsWith(".md") || file.type === "text/plain") return file.text();
+  throw { code: "format" };
+}
+const FILE_ERRORS = {
+  scan: "ce PDF semble être un scan (des images) : je ne peux pas en lire le texte. Exporte-le en PDF texte, ou colle le texte.",
+  lib: "impossible de charger l'outil de lecture. Vérifie ta connexion puis réessaie.",
+  big: "fichier trop lourd (30 Mo maximum).",
+  format: "format non pris en charge. Utilise un PDF, un Word (.docx) ou un fichier texte.",
+};
+const fileErrorText = (e) => FILE_ERRORS[e && e.code] || "fichier illisible ou protégé par un mot de passe.";
 function chunkText(t, size = 12000) {
   const out = [];
   let i = 0;
@@ -1246,7 +1289,7 @@ function Onboarding({ onDone }) {
     const first = nextOne ? nextOne.matiere : matieres[0];
     const withNotes = matieres.filter((m) => (notes[m] || "").trim());
     const target = withNotes.length ? (withNotes.includes(first) ? first : withNotes[0]) : first;
-    const title = withNotes.length ? "Fais analyser tes notes de " + target : "Colle tes notes de " + target + " dans l'onglet Mes cours";
+    const title = withNotes.length ? "Fais analyser tes notes de " + target : "Dépose ou colle ton cours de " + target + " dans l'onglet Mes cours";
     items.push({ id: uid(), date: TODAY, title, type: "tache", matiere: target, done: false, go: "cours" });
     const profile = { prenom: clean(prenom, 30), niveau, matieres, objectif, rythme, mentor, createdAt: TODAY };
     if (email.trim() && consent) {
@@ -1404,6 +1447,8 @@ function MesCours({ setItems }) {
   const [prog, setProg] = useState("");
   const [msg, setMsg] = useState("");
   const [extra, setExtra] = useState("");
+  const [reading, setReading] = useState("");
+  const [drag, setDrag] = useState("");
   const matieres = [...new Set([...(prof.matieres || []), ...Object.keys(cours)])];
 
   const update = (m, patch) => {
@@ -1419,14 +1464,23 @@ function MesCours({ setItems }) {
     const over = text.length - COURS_CAP;
     if (update(m, { notes: text.slice(0, COURS_CAP) }) && over > 0) setMsg(`Ton cours est très long : seuls les ${COURS_CAP.toLocaleString("fr-FR")} premiers caractères sont gardés (${over.toLocaleString("fr-FR")} ignorés). Pour la suite, crée une matière du type « ${m} (suite) ».`);
   };
-  const importFile = (m, file) => {
-    if (!file) return;
-    const rd = new FileReader();
-    rd.onload = () => {
-      const cur = (getCours()[m] || {}).notes || "";
-      setNotesFor(m, (cur ? cur + "\n\n" : "") + String(rd.result || ""));
-    };
-    rd.readAsText(file);
+  const importFiles = async (m, files) => {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setReading(m); setMsg("");
+    let text = (getCours()[m] || {}).notes || "";
+    let added = false;
+    const errs = [];
+    for (const f of list) {
+      try {
+        const t = (await readFileText(f)).trim();
+        if (t) { text = (text ? text + "\n\n" : "") + t; added = true; }
+        else errs.push(`${f.name} : fichier vide.`);
+      } catch (e) { errs.push(`${f.name} : ${fileErrorText(e)}`); }
+    }
+    if (added) setNotesFor(m, text);
+    if (errs.length) setMsg((p) => (p ? p + " " : "") + errs.join(" "));
+    setReading("");
   };
   const analyze = async (m) => {
     const c = getCours()[m];
@@ -1448,7 +1502,7 @@ function MesCours({ setItems }) {
   };
 
   return html`<div class="flex flex-col gap-4 max-w-3xl">
-    <${PageHead} title="Mes cours" sub="Colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes restent dans ton navigateur et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
+    <${PageHead} title="Mes cours" sub="Dépose ou colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes restent dans ton navigateur et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
     ${msg && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${msg}</div>`}
     ${matieres.length === 0 && html`<p class="text-sm text-muted">Aucune matière pour l'instant. Ajoute-en une ci-dessous.</p>`}
     ${matieres.map((m) => {
@@ -1461,23 +1515,29 @@ function MesCours({ setItems }) {
           <h2 class="text-sm font-medium">${m}</h2>
           <span class="mono text-xs ${d && !stale ? "text-ok" : "text-dim"}">${n === 0 ? "Aucune note" : d ? (stale ? "Notes modifiées" : "Analysé") : `${n.toLocaleString("fr-FR")} caractères`}</span>
         </div>
+        ${n === 0 && html`<label onDragOver=${(e) => { e.preventDefault(); setDrag(m); }} onDragLeave=${() => setDrag("")}
+          onDrop=${(e) => { e.preventDefault(); setDrag(""); importFiles(m, e.dataTransfer.files); }}
+          class="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed px-4 py-6 text-center cursor-pointer transition-colors"
+          style=${{ borderColor: drag === m ? "var(--brass)" : "var(--line-2)", background: drag === m ? "var(--brass-soft)" : "transparent" }}>
+          <span class="text-sm">${reading === m ? "Lecture de ton cours…" : "Glisse ton cours ici"}</span>
+          <span class="text-xs text-dim">PDF, Word ou texte · ou clique pour choisir · ou colle-le plus bas</span>
+          <input type="file" multiple accept=${FILE_ACCEPT} class="hidden" onChange=${(e) => { importFiles(m, e.target.files); e.target.value = ""; }} />
+        </label>`}
+        ${n > 0 && reading === m && html`<p class="text-xs text-dim">Lecture de ton fichier…</p>`}
         <textarea rows=${n ? 6 : 3} value=${c.notes || ""} onInput=${(e) => setNotesFor(m, e.target.value)}
-          placeholder="Colle ici ton plan de cours, tes notes de CM, tes fiches…" aria-label=${"Notes de " + m}
+          placeholder=${n ? "" : "…ou colle ici ton plan de cours, tes notes de CM, tes fiches"} aria-label=${"Notes de " + m}
           class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
         <div class="flex flex-wrap items-center gap-2">
           <button type="button" onClick=${() => analyze(m)} disabled=${!!busy || !n}
             class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
             ${busy === m && html`<${Spinner} />`} ${d ? "Réanalyser" : "Analyser mes notes"}${busy === m && prog ? ` (${prog})` : ""}</button>
-          <label class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt cursor-pointer">Importer un .txt
-            <input type="file" accept=".txt,.md,text/plain" class="hidden" onChange=${(e) => { importFile(m, e.target.files[0]); e.target.value = ""; }} /></label>
+          ${n > 0 && html`<label class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt cursor-pointer">Ajouter un fichier
+            <input type="file" multiple accept=${FILE_ACCEPT} class="hidden" onChange=${(e) => { importFiles(m, e.target.files); e.target.value = ""; }} /></label>`}
           ${n > 0 && html`<button type="button" onClick=${() => clear(m)} class="mono text-xs px-3 py-2 text-dim hover:text-red">Vider</button>`}
         </div>
         ${stale && html`<p class="text-xs text-dim">Tes notes ont changé depuis la dernière analyse.</p>`}
         ${d && c.skipped > 0 && html`<p class="text-xs text-dim">${c.skipped} partie(s) du cours n'ont pas pu être analysées. Relance l'analyse pour réessayer.</p>`}
-        ${d && html`<div class="rounded-xl border border-line p-3 text-xs flex flex-col gap-1.5" style=${{ background: "var(--panel-2)" }}>
-          <div class="eyebrow">Ce que le mentor a retenu · vérifie que c'est exact</div>
-          ${[["Plan", "plan"], ["Notions", "notions"], ["Arrêts", "arrets"]].map(([l, k]) => (d[k] || []).length ? html`<div key=${k}><span class="text-muted">${l} : </span>${d[k].join(" · ")}</div>` : null)}
-        </div>`}
+        ${d && !stale && html`<p class="text-xs text-ok">✓ Cours analysé : ${d.plan.length} parties, ${d.notions.length} notions, ${d.arrets.length} arrêts repérés.</p>`}
       </section>`;
     })}
     <div class="flex gap-2 max-w-md">
