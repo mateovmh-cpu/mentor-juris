@@ -40,8 +40,7 @@ module.exports = async function handler(req, res) {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-5-5",
-        max_tokens: 4000,
+model: ["claude-sonnet-5-5", "claude-haiku-5-5"].includes(req.body.model) ? req.body.model : "claude-sonnet-5-5",        max_tokens: 4000,
         system: "Tu es l'assistant pédagogique d'une application pour étudiants en droit français. Suis exactement le format de réponse demandé. Quand on te demande du JSON : réponds uniquement avec le JSON, sans balises de code ni texte autour ; dans les chaînes, n'utilise jamais le guillemet droit \" (cite avec « ») et n'insère aucun retour à la ligne. Ne cite jamais un arrêt ou un article dont tu n'es pas certain : écris « à vérifier ».",
         messages: [{ role: "user", content: prompt }]
       })
