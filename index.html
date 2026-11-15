@@ -1012,6 +1012,35 @@ function App() {
   </div>`;
 }
 
+async function askJson(sample, prompt, signal) {
+  let code = store.get("mj_code", "");
+  if (!code) {
+    code = (window.prompt("Code d'accès Mentor Juris :") || "").trim();
+    if (!code) throw { code: "bad_code" };
+    store.set("mj_code", code);
+  }
+  let r;
+  try {
+    r = await fetch("/api/corriger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, code }),
+      signal
+    });
+  } catch { throw { code: "network" }; }
+  if (r.status === 401) { store.set("mj_code", ""); throw { code: "bad_code" }; }
+  if (r.status === 400) throw { code: "prompt_too_large" };
+  if (r.status === 429) throw { code: "rate_limited" };
+  if (!r.ok) throw { code: "failed" };
+  const { text } = await r.json();
+  const s = (text || "").trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "");
+  try { return JSON.parse(s); } catch {}
+  const a = s.search(/[\[{]/), b = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch {} }
+  throw { code: "invalid_json" };
+}
+ERRORS.bad_code = "Code d'accès invalide. Relancez pour le saisir à nouveau.";
+ERRORS.network = "Connexion impossible. Vérifiez votre réseau puis relancez.";
 ReactDOM.createRoot(document.getElementById("root")).render(html`<${App} />`);
 </script>
 </body>
