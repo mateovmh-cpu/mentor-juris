@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mentor Juris : le mentor IA des étudiants en droit</title>
+<meta name="description" content="Planning de révision, fiches d'arrêt, cas pratiques et examens blancs corrigés par un mentor IA qui te pousse. Bêta gratuite, inscris-toi.">
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #0b0f15; --panel: #11161f; --panel-2: #171e2a;
+    --line: rgba(255,255,255,.10); --text: #e4e1d9; --muted: #8a93a4;
+    --red: #ff3b4e; --brass: #d2ad63; --brass-soft: rgba(210,173,99,.12); --ok: #4fbf8b;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--ink); color: var(--text); font-family: var(--font); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 max(16px, env(safe-area-inset-left)); }
+  a { color: var(--brass); }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; border-radius: 4px; }
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -.01em; color: var(--text); text-decoration: none; }
+  .logo i { width: 28px; height: 28px; border-radius: 8px; background: var(--brass); color: var(--ink); display: grid; place-items: center; font-style: normal; font-size: 15px; }
+  .badge { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--brass); border: 1px solid var(--brass-soft); background: var(--brass-soft); padding: 4px 10px; border-radius: 999px; }
+  h1 { font-size: clamp(32px, 7vw, 52px); line-height: 1.08; letter-spacing: -.03em; font-weight: 600; margin: 28px 0 16px; text-wrap: balance; }
+  h2 { font-size: 24px; letter-spacing: -.02em; margin: 0 0 8px; font-weight: 600; }
+  h3 { font-size: 16px; margin: 0 0 4px; font-weight: 600; }
+  p { margin: 0 0 12px; }
+  .lead { font-size: 18px; color: var(--muted); max-width: 56ch; margin-bottom: 28px; }
+  section { padding: 44px 0 0; }
+  form { display: grid; gap: 10px; max-width: 460px; }
+  label.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  input[type=email], select { width: 100%; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 14px 14px; font: inherit; }
+  input::placeholder { color: #5b6577; }
+  .check { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted); }
+  .check input { margin-top: 3px; accent-color: var(--brass); }
+  button.cta { background: var(--brass); color: var(--ink); border: 0; border-radius: 12px; padding: 14px 18px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.cta:hover { filter: brightness(1.08); }
+  button.cta:disabled { opacity: .6; cursor: default; }
+  .hp { position: absolute; left: -9999px; }
+  #msg { min-height: 22px; font-size: 14px; }
+  #msg.ok { color: var(--ok); } #msg.err { color: var(--red); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .order { margin-top: 36px; position: relative; }
+  .order .tag { position: absolute; top: 14px; right: 16px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .eyebrow { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .order .big { font-size: 19px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 6px; }
+  .order .why { color: var(--red); font-size: 14px; margin: 0; }
+  .grid { display: grid; gap: 12px; margin-top: 18px; }
+  @media (min-width: 640px) { .grid.two { grid-template-columns: 1fr 1fr; } }
+  .card p { color: var(--muted); font-size: 14.5px; margin: 0; }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 18px 0 0; display: grid; gap: 12px; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 34px 1fr; gap: 12px; }
+  ol.steps li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--brass); color: var(--brass); display: grid; place-items: center; font-size: 13px; }
+  ol.steps p { color: var(--muted); margin: 0; font-size: 14.5px; }
+  .limits { border-left: 3px solid var(--brass); padding-left: 16px; }
+  .limits p { color: var(--muted); }
+  footer { margin-top: 64px; padding: 28px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+  .legal { font-size: 13.5px; color: var(--muted); }
+  .legal h2 { font-size: 18px; color: var(--text); margin-top: 8px; }
+  .legal h3 { color: var(--text); margin-top: 14px; font-size: 14.5px; }
+  .legal li { margin-bottom: 4px; }
+  .todo { background: rgba(255,59,78,.12); color: var(--red); padding: 0 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="#"><i>⚖</i> Mentor Juris</a>
+    <span class="badge">Bêta gratuite</span>
+  </header>
+
+  <main>
+    <h1>Le mentor IA qui te donne l'ordre du jour, pas juste des fiches.</h1>
+    <p class="lead">Planning de révision jusqu'à tes partiels, fiches d'arrêt, cas pratiques et examens blancs corrigés. Pour les étudiants en droit qui veulent être poussés.</p>
+
+    <form id="signup" novalidate>
+      <label class="sr" for="email">Adresse e-mail</label>
+      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" placeholder="ton.email@exemple.fr" required>
+      <label class="sr" for="niveau">Ton niveau</label>
+      <select id="niveau" name="niveau">
+        <option value="">Ton niveau (facultatif)</option>
+        <option>L1</option><option>L2</option><option>L3</option>
+        <option>M1</option><option>M2</option><option>Prépa CRFPA</option><option>Autre</option>
+      </select>
+      <input class="hp" type="text" name="_gotcha" tabindex="-1" autocomplete="off" aria-hidden="true">
+      <label class="check"><input id="consent" name="consentement" type="checkbox" value="oui" required>
+        <span>J'accepte de recevoir un e-mail pour l'accès à la bêta et le lancement de Mentor Juris. Je peux me désinscrire à tout moment. <a href="#confidentialite">En savoir plus</a></span></label>
+      <button class="cta" type="submit">Demander mon accès à la bêta</button>
+      <div id="msg" role="status" aria-live="polite"></div>
+    </form>
+
+    <div class="card order" aria-label="Exemple d'ordre du jour">
+      <span class="tag">Exemple</span>
+      <div class="eyebrow">Ordre du jour du mentor</div>
+      <div class="big">Terminez «&nbsp;Fiche d'arrêt&nbsp;: CE, 1995&nbsp;» avant toute autre chose.</div>
+      <p class="why">Partiel de droit administratif dans 3 jours : chaque retard se paie le jour J.</p>
+    </div>
+
+    <section>
+      <h2>Ce que tu trouves dedans</h2>
+      <div class="grid two">
+        <div class="card"><h3>Pilotage</h3><p>Tes partiels et rendus de TD, un mentor qui te dit quoi faire aujourd'hui, et une série de jours validés.</p></div>
+        <div class="card"><h3>Fiches d'arrêt</h3><p>Colle ton cours ou un arrêt : faits, procédure, problème de droit, solution, portée.</p></div>
+        <div class="card"><h3>Cas pratiques</h3><p>Résolution en majeure, mineure, conclusion, pour t'entraîner à la méthode attendue.</p></div>
+        <div class="card"><h3>Cellule d'examen</h3><p>Sujet imposé, chrono, sorties de page comptées, correction à la fin.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Comment ça marche</h2>
+      <ol class="steps">
+        <li><div><h3>Tu entres tes échéances</h3><p>Partiels, rendus de TD, révisions.</p></div></li>
+        <li><div><h3>Tu choisis ton mentor</h3><p>Strict ou plus posé : le ton change, pas l'exigence.</p></div></li>
+        <li><div><h3>Tu t'entraînes en conditions réelles</h3><p>Fiches, cas, examens blancs, avec une correction détaillée.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="limits">
+      <h2>Ce qu'il faut savoir</h2>
+      <p>Mentor Juris repose sur une intelligence artificielle. Elle peut se tromper, notamment sur une référence d'arrêt ou un numéro d'article : vérifie toujours dans ton cours et dans le Code. Ce n'est pas un service de conseil juridique, et aucun résultat à tes examens n'est garanti.</p>
+      <p>La bêta est gratuite. Si une offre payante arrive un jour, tu en seras informé avant tout paiement.</p>
+    </section>
+
+    <section>
+      <a class="cta" href="#signup" style="display:inline-block;text-decoration:none;background:var(--brass);color:var(--ink);border-radius:12px;padding:14px 18px;font-weight:600">Rejoindre la bêta</a>
+    </section>
+  </main>
+
+  <footer>
+    <p>© Mentor Juris · <a href="#mentions">Mentions légales</a> · <a href="#confidentialite">Confidentialité</a> · <a href="/">Accès testeurs</a></p>
+
+    <div class="legal">
+      <section id="mentions">
+        <h2>Mentions légales</h2>
+        <p><strong>Éditeur :</strong> <span class="todo">[Prénom NOM]</span>, personne physique, éditeur non professionnel en phase de bêta. Contact : <span class="todo">[adresse e-mail de contact dédiée]</span>.</p>
+        <p><strong>Hébergeur :</strong> Vercel Inc., États-Unis, <a href="https://vercel.com/legal" rel="noopener">vercel.com/legal</a>.</p>
+        <p><strong>Avertissement :</strong> les contenus produits par Mentor Juris sont générés par une intelligence artificielle. Ils sont fournis à titre d'entraînement pédagogique, ne constituent pas un conseil juridique et peuvent contenir des erreurs.</p>
+      </section>
+
+      <section id="confidentialite">
+        <h2>Politique de confidentialité</h2>
+        <h3>Responsable du traitement</h3>
+        <p>L'éditeur indiqué dans les mentions légales.</p>
+        <h3>Données collectées et finalités</h3>
+        <ul>
+          <li><strong>Liste d'attente :</strong> ton adresse e-mail et, si tu le souhaites, ton niveau d'études. Elles servent uniquement à t'informer de l'accès à la bêta et du lancement. Base légale : ton consentement.</li>
+          <li><strong>Utilisation de l'application :</strong> les textes que tu soumets (notes, copies, cas pratiques) sont envoyés, via un serveur de Mentor Juris, à un fournisseur d'intelligence artificielle, Anthropic (États-Unis), qui génère la réponse. Mentor Juris ne les enregistre pas dans une base de données ; des extraits techniques peuvent toutefois apparaître brièvement dans les journaux de l'hébergeur en cas d'erreur. Anthropic traite ces textes selon ses propres conditions : <a href="https://www.anthropic.com/legal/privacy" rel="noopener">anthropic.com/legal/privacy</a>. N'y colle donc aucune donnée personnelle sensible.</li>
+          <li><strong>Sur ton appareil :</strong> ton calendrier, ton mentor et ton code d'accès sont mémorisés dans ton navigateur et ne sont pas envoyés à nos serveurs.</li>
+        </ul>
+        <h3>Destinataires et transferts</h3>
+        <p>Les e-mails sont reçus par <span class="todo">[nom de l'outil de formulaire]</span>. L'hébergeur (Vercel) et le fournisseur d'IA (Anthropic) sont situés aux États-Unis, ce qui implique un transfert de données hors de l'Union européenne ; ces prestataires publient leurs garanties sur leurs sites. Tes données ne sont ni vendues ni cédées.</p>
+        <h3>Durée de conservation</h3>
+        <p>Ton e-mail est conservé au maximum 12 mois, ou jusqu'à ta demande de suppression.</p>
+        <h3>Tes droits</h3>
+        <p>Tu peux demander l'accès, la rectification, l'effacement ou la limitation de tes données, t'opposer à leur traitement et retirer ton consentement à tout moment, en écrivant à l'adresse de contact ci-dessus. Tu peux aussi introduire une réclamation auprès de la CNIL : <a href="https://www.cnil.fr" rel="noopener">cnil.fr</a>.</p>
+        <h3>Cookies</h3>
+        <p>Ce site n'utilise aucun cookie publicitaire ni outil de mesure d'audience.</p>
+      </section>
+    </div>
+  </footer>
+</div>
+
+<script>
+  // Colle ici l'adresse fournie par ton service de formulaire (ex. https://formspree.io/f/xxxxxxx)
+  const FORM_ENDPOINT = "";
+
+  const form = document.getElementById("signup");
+  const msg = document.getElementById("msg");
+  const say = (t, cls) => { msg.textContent = t; msg.className = cls || ""; };
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = form.email.value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return say("Entre une adresse e-mail valide.", "err");
+    if (!form.consentement.checked) return say("Coche la case pour recevoir ton accès.", "err");
+    if (!FORM_ENDPOINT) return say("Le formulaire n'est pas encore relié. Réessaie bientôt.", "err");
+    const btn = form.querySelector("button");
+    btn.disabled = true; say("Envoi…");
+    try {
+      const r = await fetch(FORM_ENDPOINT, { method: "POST", headers: { Accept: "application/json" }, body: new FormData(form) });
+      if (!r.ok) throw new Error();
+      form.reset(); say("C'est noté. Tu recevras un e-mail dès que ton accès est ouvert.", "ok");
+    } catch {
+      say("Échec de l'envoi. Vérifie ta connexion et réessaie.", "err");
+    } finally { btn.disabled = false; }
+  });
+</script>
+</body>
+</html>
