@@ -1,0 +1,2303 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mentor Juris</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: slim top bar with discreet tab nav; Pilotage = mentor order on top, compact year tracker centred below. Apple-style system type, hairline borders. */
+  :root {
+    color-scheme: dark;
+    --ink: #0b0f15;        /* page ground */
+    --panel: #11161f;      /* surfaces */
+    --panel-2: #171e2a;    /* inputs, nested */
+    --line: rgba(255, 255, 255, .08);   /* hairlines */
+    --line-2: rgba(255, 255, 255, .16);
+    --text: #e4e1d9;
+    --muted: #7f8899;
+    --dim: #4f586a;
+    --red: #ff3b4e;        /* échéances : rouge vif */
+    --red-soft: rgba(255, 59, 78, .12);
+    --brass: #d2ad63;      /* aujourd'hui, sélection */
+    --brass-soft: rgba(210, 173, 99, .12);
+    --ok: #4fbf8b;
+    --exam: #06080b;       /* salle d'examen, plus sombre */
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: var(--font-body);
+    --font-code: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html, body { background: var(--ink); color: var(--text); }
+  body { font-family: var(--font-body); font-size: 14.5px; line-height: 1.55; font-weight: 400; letter-spacing: -0.005em; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+  .gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .display { font-family: var(--font-display); font-weight: 500; letter-spacing: -0.02em; text-wrap: balance; }
+  .code { font-family: var(--font-code); font-size: 12.5px; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .eyebrow { font-family: var(--font-body); font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  textarea::placeholder, input::placeholder { color: var(--dim); }
+  :focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+  .topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: color-mix(in srgb, var(--ink) 88%, transparent); backdrop-filter: blur(8px); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--ink); }
+  .navscroll { overflow-x: auto; scrollbar-width: none; }
+  .navscroll::-webkit-scrollbar { display: none; }
+  .sq { width: 7px; height: 7px; border-radius: 1.5px; flex: none; }
+  .caret::after { content: "▍"; color: var(--brass); margin-left: 2px; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .spin, .pulse, .caret::after { animation: none; } }
+  select { background-image: none; }
+  @media (min-resolution: 2dppx) {
+    .border { border-width: .5px !important; }
+    .border-b { border-bottom-width: .5px !important; }
+    .border-t { border-top-width: .5px !important; }
+    .border-y { border-top-width: .5px !important; border-bottom-width: .5px !important; }
+  }
+</style>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script>
+  tailwind.config = { theme: { extend: { colors: {
+    ink: "var(--ink)", panel: "var(--panel)", panel2: "var(--panel-2)", line: "var(--line)", line2: "var(--line-2)",
+    txt: "var(--text)", muted: "var(--muted)", dim: "var(--dim)", red: "var(--red)", brass: "var(--brass)", ok: "var(--ok)"
+  } } } };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const { useState, useEffect, useRef, useMemo } = React;
+const html = htm.bind(React.createElement);
+
+const DAY = 86400000;
+const pad = (n) => String(n).padStart(2, "0");
+const toIso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fromIso = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const isoIn = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return toIso(d); };
+const TODAY = isoIn(0);
+const diffDays = (a, b) => Math.round((fromIso(b) - fromIso(a)) / DAY);
+const longDate = (s) => fromIso(s).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+const shortDate = (s) => fromIso(s).toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" });
+
+const store = {
+  get(k, f) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : f; } catch { return f; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} sync.mark(k); }
+};
+
+/* ===== Comptes (Supabase, appels REST directs) ===== */
+const SB_URL = "https://quszlzddqwhmnrjihded.supabase.co";
+const SB_KEY = "sb_publishable_WdcG0rZi3lTWrmjq3dyS2A_bf7R0y2c";
+const SESSION_KEY = "mj_session";
+const SYNC_KEYS = ["mj_profile", "mj_items", "mj_cours", "mj_quiz", "mj_qbank", "mj_daily", "mj_mentor"];
+
+const auth = {
+  _refreshing: null,
+  session() { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } },
+  save(d) {
+    const s = { access_token: d.access_token, refresh_token: d.refresh_token,
+      expires_at: d.expires_at || Math.floor(Date.now() / 1000) + (Number(d.expires_in) || 3600),
+      user: d.user ? { id: d.user.id, email: d.user.email } : (auth.session() || {}).user };
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch {}
+    return s;
+  },
+  clear() { try { localStorage.removeItem(SESSION_KEY); } catch {} },
+  async call(path, opts = {}) {
+    let r;
+    try { r = await fetch(SB_URL + path, { ...opts, headers: { apikey: SB_KEY, "Content-Type": "application/json", ...(opts.headers || {}) } }); }
+    catch { throw { code: "network" }; }
+    return r;
+  },
+  async signIn(email, password) {
+    const r = await auth.call("/auth/v1/token?grant_type=password", { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase(), password }) });
+    if (r.status === 429) throw { code: "rate_limited" };
+    if (!r.ok) throw { code: r.status === 400 ? "bad_login" : "failed" };
+    return auth.save(await r.json());
+  },
+  async signUp(email, password, code) {
+    let r;
+    try { r = await fetch("/api/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, code }) }); }
+    catch { throw { code: "network" }; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw { code: e.error || "failed" }; }
+    return auth.signIn(email, password);
+  },
+  async recover(email) {
+    const to = encodeURIComponent(location.origin + location.pathname);
+    const r = await auth.call("/auth/v1/recover?redirect_to=" + to, { method: "POST", body: JSON.stringify({ email: email.trim().toLowerCase() }) });
+    if (r.status === 429) throw { code: "rate_limited" };
+    if (!r.ok) throw { code: "failed" };
+  },
+  async token() {
+    const s = auth.session();
+    if (!s) throw { code: "auth" };
+    if (s.expires_at * 1000 - Date.now() > 60000) return s.access_token;
+    if (!auth._refreshing) auth._refreshing = (async () => {
+      const r = await auth.call("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: JSON.stringify({ refresh_token: s.refresh_token }) });
+      if (r.status === 400 || r.status === 401) { auth.clear(); throw { code: "auth" }; }
+      if (!r.ok) throw { code: "failed" };
+      return auth.save(await r.json()).access_token;
+    })().finally(() => { auth._refreshing = null; });
+    return auth._refreshing;
+  },
+  async setPassword(password, accessToken) {
+    const r = await auth.call("/auth/v1/user", { method: "PUT", headers: { Authorization: "Bearer " + (accessToken || await auth.token()) }, body: JSON.stringify({ password }) });
+    if (r.status === 422) throw { code: "same_password" };
+    if (!r.ok) throw { code: r.status === 401 ? "auth" : "failed" };
+  },
+  async signOut() {
+    await sync.flush().catch(() => {});
+    const s = auth.session();
+    if (s) auth.call("/auth/v1/logout", { method: "POST", headers: { Authorization: "Bearer " + s.access_token } }).catch(() => {});
+    wipeLocal();
+    location.replace(location.pathname);
+  },
+  async deleteAccount() {
+    const t = await auth.token();
+    let r;
+    try { r = await fetch("/api/supprimer-compte", { method: "POST", headers: { Authorization: "Bearer " + t } }); }
+    catch { throw { code: "network" }; }
+    if (!r.ok) throw { code: r.status === 401 ? "auth" : "failed" };
+    wipeLocal();
+    location.replace(location.pathname);
+  }
+};
+function wipeLocal() {
+  sync.ready = false; sync.last = {}; sync.dirty.clear();
+  for (const k of [...SYNC_KEYS, SESSION_KEY, "mj_code"]) { try { localStorage.removeItem(k); } catch {} }
+}
+
+const v_null = (raw) => raw === null || raw === undefined || raw === "null";
+const sync = {
+  ready: false, dirty: new Set(), timer: null, status: "ok", listeners: new Set(), last: {},
+  setStatus(s) { this.status = s; this.listeners.forEach((f) => f(s)); },
+  mark(k) {
+    if (!this.ready || !SYNC_KEYS.includes(k)) return;
+    let raw = null;
+    try { raw = localStorage.getItem(k); } catch {}
+    if (!this.dirty.has(k) && (v_null(raw) ? null : raw) === this.last[k]) return; // rien de neuf depuis la dernière synchro
+    this.dirty.add(k);
+    this.setStatus("pending");
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush().catch(() => {}), 1500);
+  },
+  async rest(path, opts = {}, keepalive) {
+    const t = await auth.token();
+    let r;
+    try { r = await fetch(SB_URL + "/rest/v1/" + path, { ...opts, keepalive: !!keepalive, headers: { apikey: SB_KEY, Authorization: "Bearer " + t, "Content-Type": "application/json", ...(opts.headers || {}) } }); }
+    catch { throw { code: "network" }; }
+    if (r.status === 401) throw { code: "auth" };
+    if (!r.ok) throw { code: "failed" };
+    return r;
+  },
+  async push(keys, keepalive) {
+    const uidUser = (auth.session() || {}).user?.id;
+    if (!uidUser || !keys.length) return;
+    const now = new Date().toISOString(), up = [], del = [], raws = {};
+    for (const k of keys) {
+      let v = null;
+      try { raws[k] = localStorage.getItem(k); v = JSON.parse(raws[k] || "null"); } catch {}
+      if (v === null || v === undefined) del.push(k); else up.push({ user_id: uidUser, k, v, updated_at: now });
+    }
+    const done = () => { for (const k of keys) this.last[k] = v_null(raws[k]) ? null : raws[k]; };
+    if (up.length) await this.rest("user_kv?on_conflict=user_id,k", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify(up) }, keepalive);
+    if (del.length) await this.rest("user_kv?k=in.(" + del.join(",") + ")", { method: "DELETE", headers: { Prefer: "return=minimal" } }, keepalive);
+    done();
+  },
+  async flush(keepalive) {
+    clearTimeout(this.timer);
+    if (!this.ready || !this.dirty.size) return;
+    const keys = [...this.dirty];
+    this.dirty.clear();
+    this.setStatus("saving");
+    try { await this.push(keys, keepalive); this.setStatus(this.dirty.size ? "pending" : "ok"); }
+    catch (e) {
+      keys.forEach((k) => this.dirty.add(k));
+      this.setStatus(e.code === "auth" ? "auth" : "offline");
+      if (e.code !== "auth") this.timer = setTimeout(() => this.flush().catch(() => {}), 15000);
+      throw e;
+    }
+  },
+  // Connexion → récupération → affichage. Compte vide : on envoie les données locales.
+  async pull() {
+    const r = await this.rest("user_kv?select=k,v");
+    const rows = await r.json();
+    if (!rows.length) {
+      const local = SYNC_KEYS.filter((k) => { try { return JSON.parse(localStorage.getItem(k) || "null") !== null; } catch { return false; } });
+      await this.push(local);
+    } else {
+      const remote = Object.fromEntries(rows.map((x) => [x.k, x.v]));
+      for (const k of SYNC_KEYS) {
+        try { if (k in remote) localStorage.setItem(k, (this.last[k] = JSON.stringify(remote[k]))); else { localStorage.removeItem(k); this.last[k] = null; } } catch {}
+      }
+    }
+    this.ready = true;
+    this.setStatus("ok");
+  }
+};
+window.addEventListener("pagehide", () => { sync.flush(true).catch(() => {}); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") sync.flush(true).catch(() => {}); });
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+const TYPES = {
+  partiel:  { label: "Partiel",  deadline: true },
+  td:       { label: "Rendu TD",  deadline: true },
+  revision: { label: "Révision",  deadline: false },
+  tache:    { label: "Tâche",    deadline: false },
+};
+const isDeadline = (it) => TYPES[it.type]?.deadline;
+
+function seedItems() {
+  const s = (d, title, type, matiere, done = false) => ({ id: uid(), date: isoIn(d), title, type, matiere, done, doneOn: done ? isoIn(d) : undefined });
+  return [
+    s(-4, "Fiche d'arrêt : Mercier (Civ. 20 mai 1936)", "revision", "Responsabilité civile", true),
+    s(-3, "Fiche d'arrêt : Perruche (Ass. plén. 2000)", "revision", "Responsabilité civile", true),
+    s(-2, "Relire CM séance 6 — vices du consentement", "revision", "Droit des contrats", true),
+    s(-1, "Relire les fiches de responsabilité civile", "revision", "Responsabilité civile", true),
+    s(-1, "Exercices TD 5 — clauses abusives", "tache", "Droit des contrats"),
+    s(0, "Ficher Chronopost + Faurecia", "revision", "Droit des contrats"),
+    s(0, "Relire CM séance 7", "revision", "Droit des contrats", true),
+    s(1, "Plan du commentaire Com. 29 juin 2010", "tache", "Droit des contrats"),
+    s(2, "Rédiger l'introduction du commentaire", "tache", "Droit des contrats"),
+    s(3, "Rendu TD — commentaire Com. 29 juin 2010", "td", "Droit des contrats"),
+    s(5, "Fiches : Blanco, Cadot, Terrier", "revision", "Droit administratif"),
+    s(7, "Cas pratique chronométré (3 h)", "revision", "Droit des contrats"),
+    s(10, "Rendu cas pratique — responsabilité administrative", "td", "Droit administratif"),
+    s(12, "Relecture de toutes les fiches contrats", "revision", "Droit des contrats"),
+    s(18, "Partiel — Droit des contrats", "partiel", "Droit des contrats"),
+    s(24, "Partiel — Droit administratif", "partiel", "Droit administratif"),
+  ];
+}
+
+const EXAMPLE_NOTES = `CM Droit des contrats — séance 7 (clauses limitatives)
+Arrêt Chronopost, Com. 22 oct. 1996
+- Sté Banchereau confie à Chronopost un pli (soumission à une adjudication), livraison promise avant midi le lendemain
+- livré en retard -> Banchereau écartée de l'adjudication
+- Banchereau assigne Chronopost en dommages-intérêts
+- CA Rennes 30 juin 1993 : applique la clause limitative (indemnisation limitée au prix du transport)
+- pourvoi de Banchereau
+- Cass. casse au visa art. 1131 anc. (cause) : Chronopost spécialiste du transport rapide, s'était engagée à livrer dans un délai déterminé -> la clause "contredisait la portée de l'engagement pris" => réputée non écrite
+prof : notion d'OBLIGATION ESSENTIELLE ++ / suite : Faurecia 2010 / auj. art. 1170 C. civ. (ord. 2016)
+TD : penser à distinguer manquement à l'obligation essentielle vs faute lourde`;
+
+const EXAMPLE_CAS = `M. Durand confie à la société TransExpress un dossier de candidature à un marché public, que celle-ci s'engage à livrer « avant 12 h le lendemain, garanti ». Le pli arrive à 15 h ; la candidature est rejetée. TransExpress oppose la clause de ses conditions générales limitant toute indemnisation au prix du transport (28 €). M. Durand vous consulte.`;
+
+const EXAMPLE_FICHE = {
+  example: true,
+  titre: "Cass. com., 22 octobre 1996, Chronopost",
+  faits: "La société Banchereau confie à la société Chronopost un pli contenant une soumission à une adjudication, que le transporteur s'engage à livrer avant midi le lendemain. Le pli arrive en retard et Banchereau ne peut concourir.",
+  procedure: "Banchereau assigne Chronopost en réparation. La cour d'appel de Rennes (30 juin 1993) applique la clause limitative de responsabilité et limite l'indemnisation au prix du transport. Banchereau forme un pourvoi.",
+  pretentions: "Le demandeur soutient que la clause ne peut jouer face à un manquement à l'engagement même de célérité ; le transporteur invoque la clause stipulée au contrat.",
+  probleme: "Une clause limitative de responsabilité peut-elle recevoir application lorsqu'elle vide de sa substance l'obligation essentielle du débiteur ?",
+  solution: "Cassation au visa de l'article 1131 ancien du Code civil. Spécialiste du transport rapide, Chronopost s'était engagée à livrer dans un délai déterminé ; la clause, qui contredit la portée de l'engagement pris, est réputée non écrite.",
+  portee: "Arrêt fondateur de la notion d'obligation essentielle, précisé par l'arrêt Faurecia (Com. 29 juin 2010) et consacré à l'article 1170 du Code civil par l'ordonnance du 10 février 2016.",
+  conseil: "Votre problème de droit doit être abstrait : ne citez ni Chronopost ni Banchereau."
+};
+
+const EXAMPLE_RESOLUTION = {
+  example: true,
+  titre: "Opposabilité d'une clause limitative en cas de retard de livraison",
+  problemes: [{
+    question: "La clause limitant l'indemnisation au prix du transport est-elle opposable à M. Durand ?",
+    majeure: "Selon l'article 1170 du Code civil, toute clause qui prive de sa substance l'obligation essentielle du débiteur est réputée non écrite (Com. 22 oct. 1996, Chronopost ; Com. 29 juin 2010, Faurecia).",
+    mineure: "TransExpress s'engageait sur un délai garanti, objet même du contrat. Limiter la réparation au prix du transport prive cet engagement de toute portée.",
+    conclusion: "La clause est réputée non écrite. M. Durand peut obtenir réparation selon le droit commun, dans la limite du dommage prévisible (art. 1231-3 C. civ.)."
+  }],
+  conseil: "Qualifiez la perte de chance avant de chiffrer le préjudice : c'est là que les copies perdent des points."
+};
+
+const MENTORS = {
+  marlowe: {
+    name: "Professeur Marlowe", short: "Marlowe", initial: "M", tone: "strict", pro: false,
+    tag: "Sévère · Harvard Law",
+    desc: "Ordres directs, aucune excuse acceptée. Pour ceux qui veulent être poussés.",
+    quote: "Une fiche non relue est une fiche perdue.",
+    prompt: "Tu es le Professeur Marlowe, mentor juridique exigeant formé à Harvard, qui coache un étudiant français en droit. Tu vouvoies, tu es direct et précis.",
+  },
+  vasseur: {
+    name: "Claire Vasseur", short: "Vasseur", initial: "C", tone: "neutral", pro: false,
+    tag: "Méthodique · Neutre",
+    desc: "Un cadre clair et un ton posé. Les priorités sont expliquées, sans pression.",
+    quote: "Une chose à la fois, dans le bon ordre.",
+    prompt: "Tu es Claire Vasseur, mentor juridique méthodique au ton posé et neutre, qui coache un étudiant français en droit. Tu vouvoies, tu expliques clairement.",
+  },
+  hartmann: {
+    name: "Juge Hartmann", short: "Hartmann", initial: "H", tone: "strict", pro: true,
+    tag: "Intransigeant · Ancien magistrat",
+    desc: "Interrogations surprises et corrections au barème le plus sévère. Pour viser la mention.",
+    quote: "La Cour ne lit pas les brouillons.",
+  },
+  delcourt: {
+    name: "Maître Delcourt", short: "Delcourt", initial: "D", tone: "strict", pro: true,
+    tag: "Stratège · Prépa CRFPA",
+    desc: "Plan de bataille sur six mois, notes de synthèse et grand oral.",
+    quote: "Le concours se gagne en novembre.",
+  },
+};
+let MENTOR = MENTORS.marlowe.prompt;
+let MENTOR_SHORT = MENTORS.marlowe.short;
+
+const ERRORS = {
+  not_granted: "L'accès à Claude n'a pas été autorisé pour cette page.",
+  sampling_disabled: "Claude n'est pas disponible pour ce compte.",
+  rate_limited: "Trop de demandes d'affilée. Patientez une minute puis relancez.",
+  session_expired: "Votre session a expiré. Reconnectez-vous à Claude puis relancez.",
+  refused: "Claude n'a pas pu traiter ce texte. Reformulez-le.",
+  invalid_json: "La réponse était mal formée. Relancez.",
+  prompt_too_large: "Texte trop long. Collez une séance à la fois.",
+};
+const NO_SAMPLE = "La génération fonctionne quand la page est ouverte dans Claude. Le résultat affiché est un exemple.";
+
+const errorText = (e) => e?.code === "no_sample" ? NO_SAMPLE : (ERRORS[e?.code] || "Échec de la génération. Relancez dans un instant.");
+
+const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
+function mentorOrder(items, tone = "strict") {
+  const pending = items.filter((i) => !i.done && !isDeadline(i));
+  const overdue = pending.filter((i) => i.date < TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  const deadlines = items.filter((i) => isDeadline(i) && i.date >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  const next = deadlines[0];
+  const todayTasks = pending.filter((i) => i.date === TODAY);
+  const nextIn = next ? diffDays(TODAY, next.date) : null;
+  const strict = tone === "strict";
+
+  if (overdue.length) {
+    const o = overdue[0], late = diffDays(o.date, TODAY);
+    return { task: o,
+      order: strict ? `Terminez « ${o.title} » avant toute autre chose.` : `Commencez par « ${o.title} », qui est en retard.`,
+      why: strict
+        ? `En retard depuis ${plural(late, "jour")}.${next ? ` ${next.title} dans ${nextIn} jours : chaque retard se paie le jour J.` : ""}`
+        : `Prévue il y a ${plural(late, "jour")}. La rattraper maintenant allège le reste de la semaine.` };
+  }
+  if (todayTasks.length) {
+    const t = todayTasks.find((i) => next && i.matiere === next.matiere) || todayTasks[0];
+    const rest = todayTasks.length - 1;
+    return { task: t,
+      order: strict ? `Aujourd'hui : « ${t.title} ». Rien d'autre tant que ce n'est pas fait.` : `Priorité du jour : « ${t.title} ».`,
+      why: [next && `${next.title} dans ${plural(nextIn, "jour")}.`, rest > 0 && `Puis ${plural(rest, "autre tâche")} aujourd'hui.`].filter(Boolean).join(" ") };
+  }
+  if (next && nextIn <= 14) {
+    return { plan: true,
+      order: strict ? `Rien n'est prévu aujourd'hui et « ${next.title} » tombe dans ${nextIn} jours. Planifiez vos séances maintenant.`
+                    : `« ${next.title} » arrive dans ${nextIn} jours et rien n'est prévu aujourd'hui. Planifions quelques séances.`,
+      why: strict ? "Un jour sans plan est un jour perdu." : "Quelques séances courtes suffisent pour démarrer." };
+  }
+  return {
+    order: strict ? "Calendrier dégagé. Avancez une fiche d'arrêt aujourd'hui, même courte." : "Rien d'urgent aujourd'hui. Une fiche d'arrêt courte serait un bon usage de votre temps.",
+    why: next ? `Prochaine échéance : ${next.title}, dans ${nextIn} jours.` : "" };
+}
+
+function streakOf(items) {
+  const days = new Set(items.filter((i) => i.done && !isDeadline(i)).map((i) => i.doneOn || i.date));
+  const validatedToday = days.has(TODAY);
+  let n = 0, d = validatedToday ? 0 : -1;
+  while (days.has(isoIn(d))) { n++; d--; }
+  const week = Array.from({ length: 7 }, (_, i) => days.has(isoIn(i - 6)));
+  return { n, validatedToday, week };
+}
+
+function Spinner() {
+  return html`<svg class="spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.2-8.56" /></svg>`;
+}
+
+function CopyButton({ text, targetRef }) {
+  const [state, setState] = useState("idle");
+  const onClick = async () => {
+    try { await navigator.clipboard.writeText(text); setState("done"); }
+    catch {
+      const el = targetRef.current;
+      if (el) { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+      setState("select");
+    }
+    setTimeout(() => setState("idle"), 2200);
+  };
+  return html`<button onClick=${onClick} disabled=${!text}
+    class="mono text-xs px-2.5 py-1.5 rounded-[10px] border border-line hover:border-line2 hover:text-txt text-muted disabled:opacity-40">
+    ${{ idle: "Copier", done: "✓ Copié", select: "Sélectionné · ⌘C" }[state]}</button>`;
+}
+
+function MentorNote({ text }) {
+  return html`<div class="rounded-xl p-4 border border-line bg-panel flex flex-col gap-1">
+    <div class="eyebrow">${MENTOR_SHORT}</div><p class="display text-[1.05rem]">${text}</p></div>`;
+}
+
+function PageHead({ cmd, title, sub }) {
+  return html`<div class="flex flex-col gap-1">
+    <h1 class="display text-2xl sm:text-[1.9rem] leading-tight">${title}</h1>
+    ${sub && html`<p class="text-muted max-w-[62ch]">${sub}</p>`}
+  </div>`;
+}
+
+function Avatar({ mentor, size = 28 }) {
+  return html`<span class="shrink-0 rounded-full grid place-items-center font-medium text-ink"
+    style=${{ width: size, height: size, fontSize: size * 0.42, background: mentor.pro ? "linear-gradient(135deg, #e9cf94, var(--brass))" : "var(--brass)" }}
+    aria-hidden="true">${mentor.initial}</span>`;
+}
+
+function StreakBadge({ streak, compact }) {
+  const hot = streak.n > 0;
+  if (compact) {
+    return html`<span class="mono text-xs inline-flex items-center gap-1 px-2 py-1 rounded-full border border-line whitespace-nowrap shrink-0 ${hot ? "text-txt" : "text-dim"}"
+      title=${`Série de révision : ${plural(streak.n, "jour")}`}>${hot ? "🔥" : "○"} ${streak.n} j</span>`;
+  }
+  return html`<div class="flex items-center gap-3">
+    <div class="hidden sm:flex gap-[3px]" aria-hidden="true">
+      ${streak.week.map((on, i) => html`<span key=${i} class="sq" style=${on ? { background: "var(--ok)" } : { background: "var(--panel-2)" }}></span>`)}
+    </div>
+    <div class="flex flex-col items-end leading-tight">
+      <span class="text-[13px] font-medium whitespace-nowrap">Série : ${plural(streak.n, "jour")} ${streak.n > 0 ? "🔥" : ""}</span>
+      <span class="text-[11px] whitespace-nowrap ${streak.validatedToday ? "text-ok" : "text-brass"}">
+        ${streak.validatedToday ? "Validée aujourd'hui" : "Validez une tâche pour la garder"}</span>
+    </div>
+  </div>`;
+}
+
+function MentorMessage({ items, mentor, streak, onDone, onPlan, onGo, planning }) {
+  const m = mentorOrder(items, mentor.tone);
+  const [read, setRead] = useState(false);
+  return html`<section aria-labelledby="msg-h" class="rounded-2xl border border-line bg-panel">
+    <div class="flex items-center justify-between gap-3 px-5 sm:px-6 py-2.5 border-b border-line">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <${Avatar} mentor=${mentor} />
+        <div class="flex flex-col min-w-0 leading-tight">
+          <span id="msg-h" class="text-[13px] font-medium truncate">${mentor.name}</span>
+          <span class="text-[11px] text-muted inline-flex items-center gap-1.5">
+            ${!read && html`<span class="sq" style=${{ background: "var(--red)", borderRadius: "50%", width: 6, height: 6 }} aria-hidden="true"></span>`}
+            ${read ? "Message lu" : "Nouveau message"} · 07:30</span>
+        </div>
+      </div>
+      <${StreakBadge} streak=${streak} />
+    </div>
+    <div class="px-5 sm:px-6 py-4 flex flex-col gap-2.5">
+      <p class="display text-[1.15rem] sm:text-[1.3rem] leading-snug">${m.order}</p>
+      ${m.why && html`<p class="text-muted text-sm max-w-[70ch]">${m.why}</p>`}
+      <div class="flex flex-wrap gap-2">
+        ${m.task && (m.task.go === "cours" || m.task.go === "test") && html`<button id="msg-go" onClick=${() => onGo && onGo(m.task.go)}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${m.task.go === "test" ? "Passer le test →" : "Aller à Mes cours →"}</button>`}
+        ${m.task && html`<button id="msg-done" onClick=${() => { onDone(m.task.id); setRead(true); }}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>✓ C'est fait</button>`}
+        ${m.plan && html`<button onClick=${onPlan} disabled=${planning}
+          class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 inline-flex items-center gap-2 disabled:opacity-60" style=${{ background: "var(--brass)" }}>
+          ${planning && html`<${Spinner} />`} Planifier mes révisions</button>`}
+        ${!read && html`<button onClick=${() => setRead(true)} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Compris</button>`}
+      </div>
+    </div>
+  </section>`;
+}
+
+function statusOf(it) {
+  if (it.done) return "done";
+  return it.date < TODAY ? "late" : "todo";
+}
+
+function dayState(list, iso) {
+  if (list.some(isDeadline)) return "deadline";
+  const tasks = list.filter((i) => !isDeadline(i));
+  if (tasks.some((t) => statusOf(t) === "late")) return "late";
+  if (tasks.length && tasks.every((t) => t.done)) return "done";
+  if (tasks.some((t) => t.done)) return "partial";
+  if (tasks.length && iso >= TODAY) return "todo";
+  return iso < TODAY ? "past" : "empty";
+}
+const CELL = {
+  deadline: { background: "var(--red)" },
+  late:     { background: "var(--red)" },
+  done:     { background: "var(--ok)" },
+  partial:  { background: "var(--ok)", opacity: .45 },
+  todo:     { background: "transparent", boxShadow: "inset 0 0 0 1px var(--muted)" },
+  empty:    { background: "var(--panel-2)" },
+  past:     { background: "var(--line)" },
+};
+const STATE_LABEL = { deadline: "échéance", late: "en retard", done: "validé", partial: "en cours", todo: "à faire", empty: "libre", past: "passé" };
+
+function Tracker({ items, selected, setSelected }) {
+  const byDate = useMemo(() => {
+    const m = {};
+    for (const it of items) (m[it.date] ||= []).push(it);
+    return m;
+  }, [items]);
+  const [hover, setHover] = useState(null);
+  const now = fromIso(TODAY);
+  const startY = now.getMonth() >= 8 ? now.getFullYear() : now.getFullYear() - 1;
+  const months = Array.from({ length: 12 }, (_, i) => new Date(startY, 8 + i, 1));
+  const focus = hover || selected;
+  const focusList = byDate[focus] || [];
+  const focusState = dayState(focusList, focus);
+  const summary = focusList.length
+    ? [focusList.find(isDeadline)?.title, `${focusList.filter((i) => !isDeadline(i)).length} tâche(s)`].filter(Boolean).join(" · ")
+    : "rien de prévu";
+
+  return html`<section aria-labelledby="trk-h" class="rounded-2xl border border-line bg-panel px-5 sm:px-7 py-4 flex flex-col gap-3.5">
+    <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2">
+      <h2 id="trk-h" class="eyebrow">Année ${startY}–${startY + 1}</h2>
+      <div class="flex flex-wrap gap-x-3 gap-y-1 mono text-[10.5px] text-muted">
+        ${[["deadline", "échéance / retard"], ["done", "validé"], ["todo", "à faire"], ["empty", "libre"]].map(([k, l]) => html`<span key=${k} class="inline-flex items-center gap-1.5">
+          <span class="sq" style=${CELL[k]}></span>${l}</span>`)}
+      </div>
+    </div>
+    <div class="flex flex-wrap justify-center gap-x-5 gap-y-3" role="grid" aria-label="Tracker annuel">
+      ${months.map((first) => {
+        const y = first.getFullYear(), m = first.getMonth();
+        const offset = (first.getDay() + 6) % 7;
+        const daysIn = new Date(y, m + 1, 0).getDate();
+        const isCurrent = y === now.getFullYear() && m === now.getMonth();
+        return html`<div key=${m} class="flex flex-col gap-1.5" role="row">
+          <span class="mono text-[10.5px] leading-none tracking-wide ${isCurrent ? "text-brass font-medium" : "text-muted"}">${first.toLocaleDateString("fr-FR", { month: "short" }).replace(".", "")}</span>
+          <div class="grid grid-cols-7 gap-[2px]">
+            ${Array.from({ length: offset }, (_, i) => html`<span key=${"o" + i} class="w-[9px] h-[9px]"></span>`)}
+            ${Array.from({ length: daysIn }, (_, i) => {
+              const iso = toIso(new Date(y, m, i + 1));
+              const st = dayState(byDate[iso] || [], iso);
+              const rings = [];
+              if (iso === TODAY) rings.push("0 0 0 1.5px var(--brass)");
+              if (iso === selected && iso !== TODAY) rings.push("0 0 0 1.5px var(--text)");
+              const style = { ...CELL[st], ...(rings.length ? { boxShadow: [CELL[st].boxShadow, ...rings].filter(Boolean).join(",") } : null) };
+              return html`<button key=${iso} role="gridcell" aria-selected=${iso === selected}
+                aria-label=${`${longDate(iso)} : ${STATE_LABEL[st]}`} title=${`${shortDate(iso)} · ${STATE_LABEL[st]}`}
+                onClick=${() => setSelected(iso)} onMouseEnter=${() => setHover(iso)} onMouseLeave=${() => setHover(null)}
+                class="w-[9px] h-[9px] rounded-[2px] hover:scale-150 transition-transform" style=${style}></button>`;
+            })}
+          </div>
+        </div>`;
+      })}
+    </div>
+    <div class="mono text-[11px] text-muted text-center truncate">
+      <span class="text-dim">›</span> <span class="capitalize ${focusState === "deadline" || focusState === "late" ? "text-red" : "text-txt"}">${shortDate(focus)}</span> · ${summary}
+    </div>
+  </section>`;
+}
+
+function DayRail({ items, selected, onToggle, onAdd, onRemove }) {
+  const list = items.filter((i) => i.date === selected).sort((a, b) => (isDeadline(b) - isDeadline(a)));
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState("revision");
+  const upcoming = items.filter((i) => isDeadline(i) && i.date >= TODAY).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 4);
+  const submit = (e) => { e.preventDefault(); if (!title.trim()) return; onAdd({ title: title.trim(), type, date: selected }); setTitle(""); };
+  const rel = diffDays(TODAY, selected);
+
+  return html`<aside class="grid gap-4 md:grid-cols-2 items-start min-w-0">
+    <section class="rounded-2xl border border-line bg-panel" aria-labelledby="day-h">
+      <div class="px-4 py-3 border-b border-line flex items-baseline justify-between gap-2">
+        <h2 id="day-h" class="text-sm font-medium capitalize">${longDate(selected)}</h2>
+        <span class="mono text-xs text-dim">${rel === 0 ? "aujourd'hui" : rel > 0 ? `J+${rel}` : `J${rel}`}</span>
+      </div>
+      <ul class="flex flex-col">
+        ${list.length === 0 && html`<li class="px-4 py-4 text-sm text-dim mono">Rien de prévu</li>`}
+        ${list.map((it) => {
+          const st = statusOf(it), dl = isDeadline(it);
+          return html`<li key=${it.id} class="group flex items-start gap-3 px-4 py-2.5 border-b border-line last:border-b-0">
+            ${dl ? html`<span class="mt-1 sq" style=${{ background: "var(--red)", width: 10, height: 10 }} aria-hidden="true"></span>`
+              : html`<button onClick=${() => onToggle(it.id)} aria-label=${it.done ? "Marquer à faire" : "Marquer comme fait"}
+                  class="mt-0.5 h-4 w-4 shrink-0 rounded-[3px] grid place-items-center text-[10px] text-ink"
+                  style=${it.done ? { background: "var(--ok)" } : { border: `1.5px solid ${st === "late" ? "var(--red)" : "var(--muted)"}` }}>${it.done ? "✓" : ""}</button>`}
+            <div class="min-w-0 flex-1">
+              <div class="text-sm ${it.done ? "line-through text-dim" : dl ? "text-red font-medium" : ""}">${it.title}</div>
+              <div class="mono text-[11px] text-dim">${TYPES[it.type].label.toLowerCase()} · ${it.matiere || "—"}${st === "late" ? html` · <span class="text-red">en retard</span>` : ""}</div>
+            </div>
+            <button onClick=${() => onRemove(it.id)} aria-label="Supprimer" class="mono text-xs text-dim hover:text-red opacity-60 group-hover:opacity-100">×</button>
+          </li>`;
+        })}
+      </ul>
+      <form onSubmit=${submit} class="flex gap-2 p-3 border-t border-line">
+        <label class="sr-only" htmlFor="add-title">Nouvel élément</label>
+        <input id="add-title" value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="Ajouter…"
+          class="flex-1 min-w-0 bg-panel2 border border-line rounded-[10px] px-2.5 py-1.5 text-sm outline-none focus:border-line2" />
+        <label class="sr-only" htmlFor="add-type">Type</label>
+        <select id="add-type" value=${type} onChange=${(e) => setType(e.target.value)}
+          class="bg-panel2 border border-line rounded-[10px] px-2 py-1.5 mono text-xs">
+          ${Object.entries(TYPES).map(([k, v]) => html`<option key=${k} value=${k}>${v.label}</option>`)}
+        </select>
+      </form>
+    </section>
+
+    <section class="rounded-2xl border border-line bg-panel" aria-labelledby="up-h">
+      <h2 id="up-h" class="px-4 py-3 border-b border-line eyebrow">Échéances</h2>
+      <ul>
+        ${upcoming.map((d) => {
+          const n = diffDays(TODAY, d.date);
+          return html`<li key=${d.id} class="flex items-center gap-3 px-4 py-2.5 border-b border-line last:border-b-0">
+            <span class="mono text-sm font-medium w-12 shrink-0 ${n <= 7 ? "text-red" : "text-txt"}">J−${n}</span>
+            <div class="min-w-0"><div class="text-sm truncate">${d.title}</div><div class="mono text-[11px] text-dim">${shortDate(d.date)}</div></div>
+          </li>`;
+        })}
+      </ul>
+    </section>
+  </aside>`;
+}
+
+function Pilotage({ items, setItems, sample, setPage, mentor, streak }) {
+  const [selected, setSelected] = useState(TODAY);
+  const [planning, setPlanning] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (id) => setItems((xs) => xs.map((i) => i.id === id ? { ...i, done: !i.done, doneOn: i.done ? undefined : TODAY } : i));
+  const done = (id) => setItems((xs) => xs.map((i) => i.id === id ? { ...i, done: true, doneOn: TODAY } : i));
+  const remove = (id) => setItems((xs) => xs.filter((i) => i.id !== id));
+  const add = (it) => setItems((xs) => [...xs, { id: uid(), done: false, matiere: "", ...it }]);
+
+  const plan = async () => {
+    setError(""); setPlanning(true);
+    try {
+      const deadlines = items.filter((i) => isDeadline(i) && i.date >= TODAY).map((i) => `${i.date} : ${i.title} (${i.matiere})`).join("\n");
+      const existing = items.filter((i) => !isDeadline(i) && i.date >= TODAY).map((i) => `${i.date} : ${i.title}`).join("\n") || "aucune";
+      const data = await askJson(sample, `${MENTOR}
+Aujourd'hui : ${TODAY}. Construis des séances de révision jusqu'aux échéances ci-dessous : répétition espacée, fiches d'arrêt, cas pratiques chronométrés, un examen blanc avant chaque partiel. Au plus 2 séances par jour, 12 au total, dates entre demain et la veille de chaque échéance, sans doublon avec les séances existantes.
+ÉCHÉANCES :
+${deadlines}
+SÉANCES EXISTANTES :
+${existing}
+Réponds uniquement avec un tableau JSON : [{"date":"YYYY-MM-DD","titre":"séance précise et actionnable (max 60 caractères)","matiere":"nom de la matière","type":"revision"}]`);
+      if (Array.isArray(data)) {
+        const added = data.map((d) => ({ id: uid(), date: d.date, title: d.titre, type: "revision", matiere: d.matiere || "Droit des contrats", done: false }));
+        setItems((xs) => [...xs, ...added]);
+      }
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  return html`<div class="flex flex-col gap-6">
+    <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${(g) => setPage(g || "cours")} planning=${planning} />
+    <${DailyQuestion} />
+    ${error && html`<div class="rounded-xl p-4 border border-red/30 bg-red-soft text-red text-sm">${error}</div>`}
+    <${Tracker} items=${items} selected=${selected} setSelected=${setSelected} />
+    <${DayRail} items=${items} selected=${selected} onToggle=${toggle} onAdd=${add} onRemove=${remove} />
+  </div>`;
+}
+
+function FichesArrêt({ sample }) {
+  const [text, setText] = useState(EXAMPLE_NOTES);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [fiche, setFiche] = useState(EXAMPLE_FICHE);
+
+  const generate = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Analyse ce cours ou ces notes de jurisprudence et produis une fiche d'arrêt rigoureuse au format français (Faits, Procédure, Prétentions, Problème de droit, Solution, Portée, Conseil méthodologique).
+TEXTE :
+${text}
+Réponds uniquement en JSON valide avec ces clés exactes :
+{"titre":"string","faits":"string","procedure":"string","pretentions":"string","probleme":"string","solution":"string","portee":"string","conseil":"string"}`);
+      setFiche({ ...data, example: false });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Fiches d'arrêt" sub="Collez vos notes de cours ou un arrêt brut. Claude génère la fiche structurée selon les exigences des correcteurs de TD." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="notes-input">Notes de cours ou arrêt</label>
+        <textarea id="notes-input" rows="10" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none focus:border-line2 font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${generate} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Générer la fiche</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Fiche structurée</span>
+          <h2 class="display text-lg">${fiche.titre}</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          ${fiche.example && html`<span class="mono text-[10px] px-2 py-1 rounded bg-panel2 text-muted border border-line">Exemple</span>`}
+          <${CopyButton} text=${Object.entries(fiche).filter(([k]) => k !== "example" && k !== "titre").map(([k, v]) => `${k.toUpperCase()}\n${v}`).join("\n\n")} />
+        </div>
+      </div>
+      <div class="flex flex-col gap-4 text-sm leading-relaxed">
+        ${[["Faits", fiche.faits], ["Procédure", fiche.procedure], ["Prétentions", fiche.pretentions], ["Problème de droit", fiche.probleme], ["Solution", fiche.solution], ["Portée", fiche.portee], ["Conseil du mentor", fiche.conseil]].map(([k, v]) => html`
+          <div key=${k} class="flex flex-col gap-1">
+            <span class="eyebrow text-brass">${k}</span>
+            <p class=${k === "Conseil du mentor" ? "text-muted italic" : ""}>${v}</p>
+          </div>
+        `)}
+      </div>
+    </div>
+  </div>`;
+}
+
+function CasPratiques({ sample }) {
+  const [text, setText] = useState(EXAMPLE_CAS);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [res, setRes] = useState(EXAMPLE_RESOLUTION);
+
+  const resolve = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Résous ce cas pratique en droit français selon la méthode canonique (majeure, mineure, conclusion pour chaque problème de droit).
+CAS :
+${text}
+Réponds uniquement en JSON valide avec cette structure :
+{"titre":"string","problemes":[{"question":"string","majeure":"string","mineure":"string","conclusion":"string"}],"conseil":"string"}`);
+      setRes({ ...data, example: false });
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Cas pratiques" sub="Soumettez un cas pratique ou un sujet de TD. Claude le résout selon le syllogisme juridique attendu en examen." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="cas-input">Énoncé du cas pratique</label>
+        <textarea id="cas-input" rows="8" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none focus:border-line2 font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${resolve} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Résoudre le cas</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Résolution méthodique</span>
+          <h2 class="display text-lg">${res.titre}</h2>
+        </div>
+        <div class="flex items-center gap-2">
+          ${res.example && html`<span class="mono text-[10px] px-2 py-1 rounded bg-panel2 text-muted border border-line">Exemple</span>`}
+          <${CopyButton} text=${res.problemes.map((p, i) => `PROBLÈME ${i+1} : ${p.question}\nMajeure : ${p.majeure}\nMineure : ${p.mineure}\nConclusion : ${p.conclusion}`).join("\n\n")} />
+        </div>
+      </div>
+      <div class="flex flex-col gap-6 text-sm leading-relaxed">
+        ${res.problemes.map((p, i) => html`
+          <div key=${i} class="flex flex-col gap-3 pb-4 border-b border-line last:border-b-0">
+            <div class="eyebrow text-brass">Problème ${i + 1} — ${p.question}</div>
+            <div class="grid gap-2 pl-3 border-l border-brass/40">
+              <div><strong class="text-xs uppercase text-muted">Majeure :</strong> ${p.majeure}</div>
+              <div><strong class="text-xs uppercase text-muted">Mineure :</strong> ${p.mineure}</div>
+              <div><strong class="text-xs uppercase text-muted">Conclusion :</strong> ${p.conclusion}</div>
+            </div>
+          </div>
+        `)}
+        ${res.conseil && html`<div class="rounded-xl p-3 bg-panel2 border border-line text-xs text-muted">💡 ${res.conseil}</div>`}
+      </div>
+    </div>
+  </div>`;
+}
+
+function NotesCours({ sample }) {
+  const mats = (store.get("mj_profile", null) || {}).matieres || ["Droit des contrats", "Droit administratif", "Droit constitutionnel", "Responsabilité civile"];
+  const [matiere, setMatiere] = useState(mats[0]);
+  const [text, setText] = useState(() => ((getCours()[mats[0]] || {}).notes || "").slice(0, 15000) || EXAMPLE_NOTES);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [synthesis, setSynthesis] = useState(null);
+
+  const synthesize = async () => {
+    setError(""); setLoading(true);
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Synthétise ce cours de ${matiere} en dégageant les notions clés, les arrêts fondateurs à retenir absolument, et les pièges à éviter en examen.
+COURS :
+${text}
+Réponds uniquement en JSON valide :
+{"titre":"string","notions":["string"],"arrets":["string"],"pieges":["string"]}`);
+      setSynthesis(data);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return html`<div class="grid gap-6 lg:grid-cols-2 items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Notes de cours" sub="Synthétisez vos notes de cours magistral pour en extraire l'essentiel à mémoriser." />
+      <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <label class="eyebrow" htmlFor="matiere-sel">Matière</label>
+        <select id="matiere-sel" value=${matiere} onChange=${(e) => { setMatiere(e.target.value); setText(((getCours()[e.target.value] || {}).notes || "").slice(0, 15000) || EXAMPLE_NOTES); }}
+          class="bg-panel2 border border-line rounded-xl px-3 py-2 text-sm outline-none">
+          ${mats.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+        </select>
+        <label class="eyebrow" htmlFor="notes-textarea">Notes brutes de CM</label>
+        <textarea id="notes-textarea" rows="8" value=${text} onInput=${(e) => setText(e.target.value)}
+          class="bg-panel2 border border-line rounded-xl p-3 text-sm outline-none font-mono leading-relaxed resize-y"></textarea>
+        <div class="flex items-center justify-between">
+          <span class="mono text-xs text-dim">${text.length} caractères</span>
+          <button onClick=${synthesize} disabled=${loading || !text.trim()}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${loading && html`<${Spinner} />`} Synthétiser</button>
+        </div>
+        ${error && html`<div class="rounded-xl p-3 border border-red/30 bg-red-soft text-red text-xs">${error}</div>`}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+      <div class="flex items-center justify-between pb-4 border-b border-line">
+        <div class="flex flex-col gap-1">
+          <span class="eyebrow">Synthèse de révision · ${matiere}</span>
+          <h2 class="display text-lg">${synthesis?.titre || "Prêt à synthétiser"}</h2>
+        </div>
+        ${synthesis && html`<${CopyButton} text=${`NOTIONS:\n${synthesis.notions.join("\n")}\n\nARRÊTS:\n${synthesis.arrets.join("\n")}\n\nPIÈGES:\n${synthesis.pieges.join("\n")}`} />`}
+      </div>
+      ${!synthesis ? html`<p class="text-sm text-dim mono py-8 text-center">Lancez la synthèse pour afficher les notions clés.</p>`
+        : html`<div class="flex flex-col gap-5 text-sm leading-relaxed">
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-brass">Notions indispensables</span>
+              <ul class="list-disc pl-4 space-y-1">${synthesis.notions.map((n, i) => html`<li key=${i}>${n}</li>`)}</ul>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-brass">Arrêts fondateurs</span>
+              <ul class="list-disc pl-4 space-y-1">${synthesis.arrets.map((a, i) => html`<li key=${i} class="font-mono text-xs">${a}</li>`)}</ul>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="eyebrow text-red">Pièges à éviter en examen</span>
+              <ul class="list-disc pl-4 space-y-1 text-red">${synthesis.pieges.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+            </div>
+          </div>`}
+    </div>
+  </div>`;
+}
+
+function CelluleEntrainement({ sample }) {
+  const [epreuve, setEpreuve] = useState("dissertation");
+  const [dureeMin, setDureeMin] = useState(180);
+  const [sujetType, setSujetType] = useState("contrats");
+  const [sujetCustom, setSujetCustom] = useState("");
+  const [locked, setLocked] = useState(true);
+
+  const [active, setActive] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(180 * 60);
+  const [copyText, setCopyText] = useState("");
+  const [exits, setExits] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const SUJETS = {
+    contrats: "La force obligatoire du contrat.",
+    administratif: "Le juge administratif et la loi.",
+    constitutionnel: "Le Conseil constitutionnel, juge des droits et libertés.",
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => {
+      setTimeLeft((s) => {
+        if (s <= 1) { clearInterval(t); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [active]);
+
+  useEffect(() => {
+    if (!active || !locked) return;
+    const handleVis = () => { if (document.hidden) setExits((n) => n + 1); };
+    document.addEventListener("visibilitychange", handleVis);
+    return () => document.removeEventListener("visibilitychange", handleVis);
+  }, [active, locked]);
+
+  const startExam = () => {
+    setTimeLeft(dureeMin * 60);
+    setExits(0);
+    setCopyText("");
+    setResult(null);
+    setActive(true);
+  };
+
+  const submitExam = async () => {
+    setActive(false);
+    setSubmitting(true);
+    const sujet = sujetType === "libre" ? (sujetCustom || "Sujet libre") : SUJETS[sujetType];
+    const words = copyText.trim().split(/\s+/).filter(Boolean).length;
+    try {
+      const data = await askJson(sample, `${MENTOR}
+Corrige cette copie d'examen de droit français (${epreuve}) sur le sujet : "${sujet}".
+COPIE :
+${copyText}
+STATISTIQUES : ${words} mots, ${exits} sorties de page détectées.
+Réponds uniquement en JSON valide :
+{"note":15.5,"appreciation":"string","points_forts":["string"],"points_a_corriger":["string"]}`);
+      setResult({ ...data, words, exits });
+    } catch (e) {
+      setActive(true);
+      window.alert(errorText(e) + " Votre copie est conservée : cliquez de nouveau sur « Rendre la copie ».");
+      return;
+      setResult({
+        note: 11.0,
+        appreciation: "Copie honorable mais la structure de l'introduction pèche par manque de précision sur la qualification juridique.",
+        points_forts: ["Bonne connaissance globale de la matière", "Style juridique correct"],
+        points_a_corriger: ["Problème de droit manquant de généralité", "Développement en deux parties trop déséquilibré"],
+        words,
+        exits
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const fmtTime = (s) => `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  const sujetActif = sujetType === "libre" ? (sujetCustom || "Sujet libre à définir") : SUJETS[sujetType];
+
+  if (active) {
+    return html`<div class="fixed inset-0 z-50 flex flex-col bg-ink text-txt select-none" style=${{ background: "var(--exam)" }}>
+      <header class="flex items-center justify-between px-6 py-4 border-b border-line bg-panel">
+        <div class="flex items-center gap-4">
+          <span class="eyebrow text-red">● Session sous tension</span>
+          <span class="text-sm font-medium capitalize">${epreuve} · ${sujetActif}</span>
+        </div>
+        <div class="flex items-center gap-6">
+          <div class="mono text-lg font-medium text-brass">${fmtTime(timeLeft)}</div>
+          ${locked && exits > 0 && html`<span class="mono text-xs px-2.5 py-1 rounded bg-red-soft text-red">Avertissement : ${exits} sortie(s)</span>`}
+          <button onClick=${() => { if (confirm("Abandonner l'épreuve ? Votre copie sera notée comme inachevée.")) { setActive(false); } }}
+            class="mono text-xs px-3 py-1.5 rounded-lg border border-line text-muted hover:text-red">Abandonner</button>
+        </div>
+      </header>
+      <div class="flex-1 grid lg:grid-cols-[300px_1fr] overflow-hidden">
+        <aside class="hidden lg:flex flex-col gap-4 p-5 border-r border-line bg-panel overflow-y-auto text-xs text-muted">
+          <div class="eyebrow text-txt">Sujet de l'épreuve</div>
+          <p class="text-sm text-txt font-medium leading-relaxed">${sujetActif}</p>
+          <hr class="border-line" />
+          <div class="eyebrow text-txt">Règles de rigueur</div>
+          <p>• Intitulés apparents obligatoires (pas de points d'interrogation dans les titres).</p>
+          <p>• 15 minutes de relecture impératives avant de rendre la copie.</p>
+          <p>• Zéro tolérance pour les citations approximatives.</p>
+        </aside>
+        <main class="flex flex-col p-6 overflow-y-auto">
+          <textarea value=${copyText} onInput=${(e) => setCopyText(e.target.value)}
+            placeholder="Rédigez votre composition ici (introduction, I, II avec chapitres et transitions)…"
+            class="flex-1 w-full bg-transparent text-txt text-base leading-relaxed outline-none resize-none font-mono"></textarea>
+          <div class="flex items-center justify-between pt-4 border-t border-line mt-4">
+            <span class="mono text-xs text-dim">${copyText.trim().split(/\s+/).filter(Boolean).length} mots rédigés</span>
+            <button onClick=${submitExam}
+              class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Rendre la copie</button>
+          </div>
+        </main>
+      </div>
+    </div>`;
+  }
+
+  return html`<div class="grid gap-6 lg:grid-cols-[1fr_360px] items-start">
+    <div class="flex flex-col gap-4">
+      <${PageHead} title="Cellule d'entraînement" sub="Conditions réelles : sujet imposé, temps limité, aucune aide extérieure. Votre copie est corrigée à la fin par le mentor." />
+      ${submitting ? html`<div class="rounded-2xl border border-line bg-panel p-12 text-center flex flex-col items-center gap-3">
+        <${Spinner} />
+        <p class="text-sm text-muted">Correction de la copie selon le barème officiel…</p>
+      </div>` : result ? html`<div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+        <div class="flex items-center justify-between pb-4 border-b border-line">
+          <div><span class="eyebrow">Bilan de l'épreuve</span><h2 class="display text-2xl font-medium">Note : ${result.note} / 20</h2></div>
+          <span class="mono text-xs text-dim">${result.words} mots · ${result.exits} sorties</span>
+        </div>
+        <p class="text-sm leading-relaxed">${result.appreciation}</p>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="p-4 rounded-xl bg-panel2 border border-line flex flex-col gap-2">
+            <span class="eyebrow text-ok">Points forts</span>
+            <ul class="list-disc pl-4 text-xs space-y-1">${result.points_forts.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+          </div>
+          <div class="p-4 rounded-xl bg-panel2 border border-line flex flex-col gap-2">
+            <span class="eyebrow text-red">À corriger</span>
+            <ul class="list-disc pl-4 text-xs space-y-1 text-red">${result.points_a_corriger.map((p, i) => html`<li key=${i}>${p}</li>`)}</ul>
+          </div>
+        </div>
+        <button onClick=${() => setResult(null)} class="mono text-xs py-2 px-4 rounded-lg border border-line w-fit">Relancer une épreuve</button>
+      </div>` : html`<div class="rounded-2xl border border-line bg-panel p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">1. Type d'épreuve</span>
+          <div class="grid grid-cols-3 gap-2">
+            ${[["dissertation", "Dissertation"], ["cas pratique", "Cas pratique"], ["commentaire", "Commentaire d'arrêt"]].map(([k, l]) => html`
+              <button key=${k} onClick=${() => setEpreuve(k)}
+                class=${`py-2.5 px-3 rounded-xl border text-xs font-medium text-left ${epreuve === k ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>${l}</button>
+            `)}
+          </div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">2. Durée</span>
+          <div class="grid grid-cols-3 gap-2">
+            ${[[60, "1 h"], [90, "1 h 30"], [180, "3 h"]].map(([m, l]) => html`
+              <button key=${m} onClick=${() => setDureeMin(m)}
+                class=${`py-2 px-3 rounded-xl border text-xs font-medium ${dureeMin === m ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>${l}</button>
+            `)}
+          </div>
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="eyebrow">3. Sujet</span>
+          <div class="flex flex-col gap-2">
+            ${Object.entries(SUJETS).map(([k, s]) => html`
+              <label key=${k} class=${`flex items-start gap-3 p-3 rounded-xl border cursor-pointer ${sujetType === k ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>
+                <input type="radio" name="sujet" checked=${sujetType === k} onChange=${() => setSujetType(k)} class="mt-0.5" />
+                <div class="flex flex-col"><span class="text-xs uppercase text-dim">${k}</span><span class="text-sm font-medium">${s}</span></div>
+              </label>
+            `)}
+            <label class=${`flex flex-col gap-2 p-3 rounded-xl border cursor-pointer ${sujetType === "libre" ? "border-brass bg-brass-soft text-txt" : "border-line text-muted"}`}>
+              <div class="flex items-center gap-3">
+                <input type="radio" name="sujet" checked=${sujetType === "libre"} onChange=${() => setSujetType("libre")} />
+                <span class="text-xs font-medium uppercase">Sujet libre (collé)</span>
+              </div>
+              ${sujetType === "libre" && html`
+                <textarea value=${sujetCustom} onInput=${(e) => setSujetCustom(e.target.value)} placeholder="Collez votre sujet de TD ici…"
+                  rows="3" class="bg-panel2 border border-line rounded-lg p-2 text-sm outline-none font-mono"></textarea>
+              `}
+            </label>
+          </div>
+        </div>
+        <div class="flex items-center justify-between pt-4 border-t border-line">
+          <label class="flex items-center gap-2 cursor-pointer text-xs">
+            <input type="checkbox" checked=${locked} onChange=${(e) => setLocked(e.target.checked)} class="rounded" />
+            <span>Mode examen bloqué (comptage des sorties de page)</span>
+          </label>
+          <button onClick=${startExam}
+            class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Entrer en salle d'examen · ${dureeMin >= 60 ? `${dureeMin/60} h` : `${dureeMin} min`}</button>
+        </div>
+      </div>`}
+    </div>
+
+    <div class="flex flex-col gap-4">
+      <${MentorNote} text="« La note en droit se gagne dans les vingt premières minutes : posez un plan irréprochable et un problème de droit chirurgical. »" />
+    </div>
+  </div>`;
+}
+
+function App() {
+  const [page, setPage] = useState("pilotage");
+  const [mentorKey, setMentorKey] = useState(() => store.get("mj_mentor", "marlowe"));
+  const [items, setItems] = useState(() => store.get("mj_items", seedItems()));
+  const [sample, setSample] = useState(null);
+  const [sampleState, setSampleState] = useState("checking");
+
+  const mentor = MENTORS[mentorKey];
+  MENTOR = mentor.prompt;
+  MENTOR_SHORT = mentor.short;
+
+  useEffect(() => { store.set("mj_items", items); }, [items]);
+  useEffect(() => {
+    store.set("mj_mentor", mentorKey);
+    MENTOR = MENTORS[mentorKey].prompt;
+    MENTOR_SHORT = MENTORS[mentorKey].short;
+  }, [mentorKey]);
+
+  useEffect(() => {
+    let active = true;
+    async function initClaude() {
+      if (window.ai?.languageModel) {
+        try {
+          const s = await window.ai.languageModel.create();
+          if (active) { setSample(s); setSampleState("ready"); return; }
+        } catch {}
+      }
+      if (active) setSampleState("unavailable");
+    }
+    initClaude();
+    return () => { active = false; };
+  }, []);
+
+  const streak = useMemo(() => streakOf(items), [items]);
+
+  const coursDot = !anyDigest();
+  const testDot = anyDigest() && !hasResults();
+  useEffect(() => { ensureTestNudge(setItems); }, []);
+  const navs = [
+    { id: "pilotage", label: "1 Pilotage" },
+    { id: "fiches", label: "2 Fiches d'arrêt" },
+    { id: "cas", label: "3 Cas pratiques" },
+    { id: "notes", label: "4 Notes de cours" },
+    { id: "examen", label: "5 Cellule d'examen" },
+    { id: "cours", label: "6 Mes cours", dot: coursDot },
+    { id: "test", label: hasResults() ? "7 Bilan" : "7 Test", dot: testDot },
+  ];
+
+  return html`<div class="min-h-screen flex flex-col pb-16">
+    <header class="topbar border-b border-line px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-4 min-w-0">
+        <button onClick=${() => setPage("pilotage")} class="flex items-center gap-2.5 text-left group shrink-0">
+          <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+          <span class="hidden sm:inline display font-medium tracking-tight group-hover:opacity-80 whitespace-nowrap">Mentor Juris</span>
+        </button>
+        <nav class="hidden md:flex navscroll items-center gap-0.5 pl-4 border-l border-line" aria-label="Navigation principale">
+          ${navs.map((n) => html`
+            <button key=${n.id} onClick=${() => setPage(n.id)}
+              class=${`mono text-xs px-1.5 py-1.5 rounded-[10px] transition-colors whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted hover:text-txt"}`}>
+              ${n.label}${n.dot && html`<span class="inline-block w-1.5 h-1.5 rounded-full ml-1.5 pulse" style=${{ background: "var(--brass)" }} aria-label="À faire"></span>`}</button>
+          `)}
+        </nav>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <${StreakBadge} streak=${streak} compact=${true} />
+        <div class="relative">
+          <label class="sr-only" htmlFor="mentor-sel">Mentor</label>
+          <select id="mentor-sel" value=${mentorKey} onChange=${(e) => setMentorKey(e.target.value)}
+            class="bg-panel2 border border-line rounded-[10px] px-3 py-1.5 mono text-xs text-txt outline-none cursor-pointer">
+            ${Object.entries(MENTORS).map(([k, m]) => html`<option key=${k} value=${k}>${m.name}${m.pro ? " (Pro)" : ""}</option>`)}
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <div class="md:hidden navscroll flex items-center gap-1 px-4 py-2 bg-panel border-b border-line">
+      ${navs.map((n) => html`
+        <button key=${n.id} onClick=${() => setPage(n.id)}
+          class=${`mono text-xs px-3 py-1.5 rounded-[10px] whitespace-nowrap ${page === n.id ? "bg-panel2 text-txt border border-line" : "text-muted"}`}>
+          ${n.label}${n.dot && html`<span class="inline-block w-1.5 h-1.5 rounded-full ml-1.5 pulse" style=${{ background: "var(--brass)" }} aria-label="À faire"></span>`}</button>
+      `)}
+    </div>
+
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 flex flex-col gap-6">
+      ${page === "pilotage" && html`<${Pilotage} items=${items} setItems=${setItems} sample=${sample} setPage=${setPage} mentor=${mentor} streak=${streak} />`}
+      ${page === "fiches" && html`<${FichesArrêt} sample=${sample} />`}
+      ${page === "cas" && html`<${CasPratiques} sample=${sample} />`}
+      ${page === "notes" && html`<${NotesCours} sample=${sample} />`}
+      ${page === "examen" && html`<${CelluleEntrainement} sample=${sample} />`}
+      ${page === "cours" && html`<${MesCours} setItems=${setItems} setPage=${setPage} />`}
+      ${page === "test" && html`<${TestDepart} setItems=${setItems} setPage=${setPage} />`}
+    </main>
+  </div>`;
+}
+
+async function askJson(sample, prompt, signal, model) {
+  const token = await auth.token();
+  let r;
+  try {
+    r = await fetch("/api/corriger", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({ prompt, model }),
+      signal
+    });
+  } catch { throw { code: "network" }; }
+  if (r.status === 401) throw { code: "auth" };
+  if (r.status === 400) throw { code: "prompt_too_large" };
+  if (r.status === 429) throw { code: "rate_limited" };
+  if (!r.ok) throw { code: "failed" };
+  const { text } = await r.json();
+  const s = (text || "").trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "");
+  try { return JSON.parse(s); } catch {}
+  const a = s.search(/[\[{]/), b = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  if (a >= 0 && b > a) { try { return JSON.parse(s.slice(a, b + 1)); } catch {} }
+  throw { code: "invalid_json" };
+}
+ERRORS.auth = "Ta session a expiré. Recharge la page pour te reconnecter.";
+ERRORS.network = "Connexion impossible. Vérifiez votre réseau puis relancez.";
+/* ===== Parcours d'accueil ===== */
+const MJ_FORM = "https://formspree.io/f/xeagaqaa";
+const NIVEAUX = ["L1", "L2", "L3", "M1", "M2", "Prépa CRFPA", "Autre"];
+const SUGGESTIONS = {
+  "L1": ["Introduction au droit", "Droit constitutionnel", "Droit civil : personnes et famille", "Histoire du droit", "Institutions juridictionnelles", "Institutions européennes"],
+  "L2": ["Droit des contrats", "Responsabilité civile", "Droit administratif", "Droit pénal général", "Droit des biens", "Droit de l'Union européenne"],
+  "L3": ["Droit des sûretés", "Procédure civile", "Droit des sociétés", "Droit du travail", "Droit pénal spécial", "Libertés fondamentales", "Droit international privé"],
+  "M1": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "M2": ["Procédure civile", "Procédure pénale", "Droit des sociétés", "Droit du travail", "Droit fiscal", "Contrats spéciaux"],
+  "Prépa CRFPA": ["Note de synthèse", "Grand oral", "Procédure civile", "Procédure pénale", "Droit des obligations", "Libertés fondamentales", "Droit des sociétés"],
+  "Autre": []
+};
+const OBJECTIFS = ["Valider mes matières (10)", "Viser un 12", "Viser 14 ou plus"];
+const RYTHMES = ["1 h par jour", "2 h par jour", "3 h par jour ou plus"];
+const OINPUT = "w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-line2";
+const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0, n);
+
+/* ---- Cours par matière ---- */
+const COURS_CAP = 250000;
+const getCours = () => store.get("mj_cours", {});
+function saveCours(obj) {
+  try { localStorage.setItem("mj_cours", JSON.stringify(obj)); sync.mark("mj_cours"); return true; } catch { return false; }
+}
+const PDFJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+const PDFJS_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const MAMMOTH_SRC = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+const MAX_FILE = 30 * 1024 * 1024;
+const FILE_ACCEPT = ".pdf,.docx,.txt,.md,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const loadScript = (src) => new Promise((res, rej) => {
+  const s = document.createElement("script");
+  s.src = src; s.onload = res; s.onerror = () => rej({ code: "lib" });
+  document.head.appendChild(s);
+});
+async function readPdf(file) {
+  if (!window.pdfjsLib) await loadScript(PDFJS_SRC);
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+  const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+  let out = "";
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    for (const it of tc.items) out += it.str + (it.hasEOL ? "\n" : "");
+    out += "\n\n";
+  }
+  if (out.replace(/\s/g, "").length < pdf.numPages * 80) throw { code: "scan" };
+  return out;
+}
+async function readDocx(file) {
+  if (!window.mammoth) await loadScript(MAMMOTH_SRC);
+  const r = await window.mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+  return r.value || "";
+}
+async function readFileText(file) {
+  const name = (file.name || "").toLowerCase();
+  if (file.size > MAX_FILE) throw { code: "big" };
+  if (name.endsWith(".pdf") || file.type === "application/pdf") return readPdf(file);
+  if (name.endsWith(".docx")) return readDocx(file);
+  if (name.endsWith(".txt") || name.endsWith(".md") || file.type === "text/plain") return file.text();
+  throw { code: "format" };
+}
+const FILE_ERRORS = {
+  scan: "ce PDF semble être un scan (des images) : je ne peux pas en lire le texte. Exporte-le en PDF texte, ou colle le texte.",
+  lib: "impossible de charger l'outil de lecture. Vérifie ta connexion puis réessaie.",
+  big: "fichier trop lourd (30 Mo maximum).",
+  format: "format non pris en charge. Utilise un PDF, un Word (.docx) ou un fichier texte.",
+};
+const fileErrorText = (e) => FILE_ERRORS[e && e.code] || "fichier illisible ou protégé par un mot de passe.";
+function chunkText(t, size = 12000) {
+  const out = [];
+  let i = 0;
+  while (i < t.length) {
+    let end = Math.min(i + size, t.length);
+    if (end < t.length) { const cut = t.lastIndexOf("\n", end); if (cut > i + size * 0.6) end = cut; }
+    out.push(t.slice(i, end));
+    i = end;
+  }
+  return out;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function askRetry(prompt, model) {
+  const waits = window.MJ_RETRY_MS || [5000, 10000, 20000, 30000, 45000];
+  for (let k = 0; ; k++) {
+    try { return await askJson(null, prompt, undefined, model); }
+    catch (e) {
+      if (e && e.code === "rate_limited" && k < waits.length) { await sleep(waits[k]); continue; }
+      throw e;
+    }
+  }
+}
+async function analyzeChunk(matiere, chunk, i, n) {
+  const prompt = `Voici ${n > 1 ? `la partie ${i + 1} sur ${n} des` : "les"} notes de cours d'un étudiant en droit, matière : ${matiere}. Extrais-en uniquement ce qui y figure, sans rien ajouter de ton cru.
+Réponds uniquement en JSON valide :
+{"plan":["intitulé de chapitre ou de partie (8 au maximum)"],"notions":["notion clé (8 au maximum)"],"arrets":["arrêt ou texte cité, avec sa date (8 au maximum)"]}
+NOTES :
+${chunk}`;
+  try { return await askRetry(prompt, "claude-haiku-5-5"); }
+  catch (e) {
+    if (e && (e.code === "failed" || e.code === "invalid_json")) return await askRetry(prompt);
+    throw e;
+  }
+}
+async function analyzeCours(matiere, notes, onProgress) {
+  const chunks = chunkText(notes.slice(0, COURS_CAP));
+  const results = new Array(chunks.length).fill(null);
+  let next = 0, done = 0, skipped = 0, fatal = null;
+  const worker = async () => {
+    while (!fatal) {
+      const i = next++;
+      if (i >= chunks.length) return;
+      try { results[i] = await analyzeChunk(matiere, chunks[i], i, chunks.length); }
+      catch (e) {
+        if (e && e.code === "invalid_json") skipped++;
+        else { fatal = e || { code: "failed" }; return; }
+      }
+      done++;
+      if (onProgress) onProgress(done, chunks.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, chunks.length) }, worker));
+  if (fatal) throw fatal;
+  const acc = { plan: [], notions: [], arrets: [] };
+  for (const data of results) {
+    if (!data) continue;
+    for (const k of ["plan", "notions", "arrets"]) {
+      for (const v of (Array.isArray(data[k]) ? data[k] : [])) {
+        const s = clean(v, 120);
+        if (s && !acc[k].some((x) => x.toLowerCase() === s.toLowerCase())) acc[k].push(s);
+      }
+    }
+  }
+  for (const k of Object.keys(acc)) acc[k] = acc[k].slice(0, 60);
+  if (!acc.plan.length && !acc.notions.length && !acc.arrets.length) throw { code: "invalid_json" };
+  return { digest: acc, skipped };
+}
+function coursContext() {
+  const entries = Object.entries(getCours()).filter(([, v]) => v && v.digest);
+  if (!entries.length) return "";
+  const budget = Math.floor(5000 / entries.length);
+  const L = (a, n) => {
+    let s = "";
+    for (const x of a || []) { if ((s + " ; " + x).length > n) break; s += (s ? " ; " : "") + x; }
+    return s;
+  };
+  const parts = entries.map(([m, v]) => `${m} — plan : ${L(v.digest.plan, budget * 0.45)}. Notions : ${L(v.digest.notions, budget * 0.25)}. Arrêts : ${L(v.digest.arrets, budget * 0.25)}.`);
+  return ` Éléments extraits des cours de l'étudiant (à utiliser quand c'est pertinent, sans en déduire autre chose) : ${parts.join(" | ")}`;
+}
+const refreshContext = () => {
+  const p = store.get("mj_profile", null);
+  if (p && Array.isArray(p.matieres)) applyProfileContext(p);
+};
+
+function OChip({ on, onClick, children }) {
+  return html`<button type="button" onClick=${onClick} aria-pressed=${on}
+    class=${`px-3 py-1.5 rounded-full border text-xs text-left ${on ? "text-txt" : "text-muted border-line"}`}
+    style=${on ? { background: "var(--brass-soft)", borderColor: "var(--brass)" } : {}}>${children}</button>`;
+}
+
+function applyProfileContext(p) {
+  const ctx = ` Contexte de l'étudiant : prénom ${p.prenom}, niveau ${p.niveau}, matières : ${p.matieres.join(", ")}. Objectif : ${p.objectif}. Rythme de révision : ${p.rythme}. Appelle-le par son prénom et adapte l'exigence à son niveau.` + coursContext() + testContext();
+  for (const m of Object.values(MENTORS)) {
+    if (!m.prompt) continue;
+    if (m.base === undefined) m.base = m.prompt;
+    m.prompt = m.base + ctx;
+  }
+}
+
+function Onboarding({ onDone }) {
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [prenom, setPrenom] = useState("");
+  const [email, setEmail] = useState(() => ((auth.session() || {}).user || {}).email || "");
+  const [consent, setConsent] = useState(false);
+  const [niveau, setNiveau] = useState("");
+  const [matieres, setMatieres] = useState([]);
+  const [custom, setCustom] = useState("");
+  const [rows, setRows] = useState([]);
+  const [notes, setNotes] = useState({});
+  const [mentor, setMentor] = useState("marlowe");
+  const [objectif, setObjectif] = useState(OBJECTIFS[0]);
+  const [rythme, setRythme] = useState(RYTHMES[1]);
+
+  useEffect(() => { setErr(""); }, [prenom, email, consent, niveau, matieres, rows]);
+
+  const toggleMatiere = (m) => setMatieres((xs) => xs.includes(m) ? xs.filter((x) => x !== m) : [...xs, m]);
+  const addCustom = () => {
+    const m = clean(custom, 50);
+    if (m && !matieres.includes(m)) setMatieres((xs) => [...xs, m]);
+    setCustom("");
+  };
+  const setRow = (id, patch) => setRows((rs) => rs.map((r) => r.id === id ? { ...r, ...patch } : r));
+  const syncRows = () => setRows((rs) => {
+    const kept = rs.filter((r) => matieres.includes(r.matiere));
+    const have = new Set(kept.map((r) => r.matiere));
+    const added = matieres.filter((m) => !have.has(m)).map((m) => ({ id: uid(), matiere: m, type: "partiel", date: "" }));
+    return [...kept, ...added];
+  });
+
+  async function next() {
+    setErr("");
+    if (step === 0) {
+      if (!clean(prenom, 30)) return setErr("Dis-moi comment je dois t'appeler.");
+      if (email.trim()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return setErr("Cette adresse e-mail n'a pas l'air valide.");
+        if (!consent) return setErr("Coche la case pour recevoir des nouvelles, ou laisse l'e-mail vide.");
+      }
+      return setStep(1);
+    }
+    if (step === 1) {
+      if (!niveau) return setErr("Choisis ton niveau.");
+      if (!matieres.length) return setErr("Choisis au moins une matière.");
+      syncRows();
+      return setStep(2);
+    }
+    if (step === 2) {
+      if (rows.some((r) => r.date && r.date < TODAY)) return setErr("Une des dates est déjà passée. Corrige-la ou laisse-la vide.");
+      return setStep(3);
+    }
+    if (step === 3) return setStep(4);
+    return finish();
+  }
+
+  function finish() {
+    const dated = rows.filter((r) => r.date);
+    const items = dated.map((r) => ({ id: uid(), date: r.date, title: (r.type === "partiel" ? "Partiel — " : "Rendu — ") + r.matiere, type: r.type, matiere: r.matiere, done: false }));
+    const nextOne = [...dated].sort((a, b) => a.date.localeCompare(b.date))[0];
+    const first = nextOne ? nextOne.matiere : matieres[0];
+    const withNotes = matieres.filter((m) => (notes[m] || "").trim());
+    const target = withNotes.length ? (withNotes.includes(first) ? first : withNotes[0]) : first;
+    const title = withNotes.length ? "Fais analyser tes notes de " + target : "Dépose ou colle ton cours de " + target + " dans l'onglet Mes cours";
+    items.push({ id: uid(), date: TODAY, title, type: "tache", matiere: target, done: false, go: "cours" });
+    const profile = { prenom: clean(prenom, 30), niveau, matieres, objectif, rythme, mentor, createdAt: TODAY };
+    if (email.trim() && consent) {
+      const fd = new FormData();
+      fd.append("email", email.trim()); fd.append("niveau", niveau); fd.append("source", "app"); fd.append("consentement", "oui");
+      fetch(MJ_FORM, { method: "POST", headers: { Accept: "application/json" }, body: fd }).catch(() => {});
+    }
+    const cours = getCours();
+    for (const m of matieres) if ((notes[m] || "").trim()) cours[m] = { ...(cours[m] || {}), notes: notes[m], digest: undefined };
+    saveCours(cours);
+    store.set("mj_items", items);
+    store.set("mj_mentor", mentor);
+    store.set("mj_profile", profile);
+    onDone(profile);
+  }
+
+  const titles = ["Bienvenue", "Ton cursus", "Tes échéances", "Tes cours", "Ton mentor"];
+  const subs = [
+    "Quelques questions, trois minutes. Ensuite, le mentor te dit quoi faire dès aujourd'hui.",
+    "Pour adapter l'exigence et les exercices à ton niveau.",
+    "Sans dates, le mentor ne peut pas te donner d'ordre du jour. Tu peux en ajouter d'autres plus tard.",
+    "Colle ton plan de cours ou tes notes, matière par matière. Plus le mentor en sait, plus ses séances sont précises. Tu peux passer cette étape.",
+    "Le ton change, pas l'exigence. Tu pourras en changer à tout moment."
+  ];
+
+  return html`<div class="min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
+    <div class="w-full max-w-xl flex flex-col gap-5">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+          <span class="display font-medium tracking-tight">Mentor Juris</span>
+        </div>
+        <span class="mono text-xs text-dim">Étape ${step + 1} sur 5</span>
+      </div>
+      <div class="flex gap-1.5" aria-hidden="true">
+        ${[0, 1, 2, 3, 4].map((i) => html`<span key=${i} class="h-1 flex-1 rounded-full" style=${{ background: i <= step ? "var(--brass)" : "var(--panel-2)" }}></span>`)}
+      </div>
+
+      <div class="rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-1">
+          <h1 class="display text-2xl leading-tight">${titles[step]}</h1>
+          <p class="text-muted text-sm">${subs[step]}</p>
+        </div>
+
+        ${step === 0 && html`<div class="flex flex-col gap-4">
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-prenom">Ton prénom</label>
+            <input id="ob-prenom" type="text" autoComplete="given-name" value=${prenom} onInput=${(e) => setPrenom(e.target.value)} class=${OINPUT} placeholder="Comment le mentor doit t'appeler" />
+          </div>
+          <div class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor="ob-email">E-mail pour les nouveautés (facultatif)</label>
+            <input id="ob-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} placeholder="Pour être prévenu des nouveautés" />
+            ${email.trim() && html`<label class="flex gap-2.5 items-start text-xs text-muted">
+              <input type="checkbox" checked=${consent} onChange=${(e) => setConsent(e.target.checked)} class="mt-0.5" style=${{ accentColor: "var(--brass)" }} />
+              <span>J'accepte de recevoir des e-mails sur Mentor Juris. Je peux me désinscrire à tout moment.</span></label>`}
+          </div>
+          <p class="text-xs text-dim">Les textes que tu soumets sont traités par une IA (Anthropic). L'IA peut se tromper : vérifie toujours les références. <a href="/landing.html#confidentialite" target="_blank" rel="noopener" class="underline" style=${{ color: "var(--brass)" }}>Confidentialité</a></p>
+        </div>`}
+
+        ${step === 1 && html`<div class="flex flex-col gap-5">
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton niveau</span>
+            <div class="flex flex-wrap gap-2">${NIVEAUX.map((n) => html`<${OChip} key=${n} on=${niveau === n} onClick=${() => setNiveau(n)}>${n}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Tes matières ce semestre</span>
+            <div class="flex flex-wrap gap-2">
+              ${(SUGGESTIONS[niveau] || []).map((m) => html`<${OChip} key=${m} on=${matieres.includes(m)} onClick=${() => toggleMatiere(m)}>${m}<//>`)}
+              ${matieres.filter((m) => !(SUGGESTIONS[niveau] || []).includes(m)).map((m) => html`<${OChip} key=${m} on=${true} onClick=${() => toggleMatiere(m)}>${m} ✕<//>`)}
+            </div>
+            ${!niveau && html`<p class="text-xs text-dim">Choisis d'abord ton niveau pour voir des suggestions.</p>`}
+            <div class="flex gap-2">
+              <input type="text" value=${custom} onInput=${(e) => setCustom(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }}
+                class=${OINPUT} placeholder="Ajouter une autre matière" aria-label="Ajouter une autre matière" />
+              <button type="button" onClick=${addCustom} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
+            </div>
+          </div>
+        </div>`}
+
+        ${step === 2 && html`<div class="flex flex-col gap-3">
+          ${rows.map((r) => html`<div key=${r.id} class="grid gap-2 rounded-xl border border-line p-3" style=${{ background: "var(--panel-2)" }}>
+            <div class="flex gap-2 items-center">
+              <select value=${r.matiere} onChange=${(e) => setRow(r.id, { matiere: e.target.value })} aria-label="Matière" class="flex-1 min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                ${matieres.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+              </select>
+              <button type="button" onClick=${() => setRows((rs) => rs.filter((x) => x.id !== r.id))} aria-label="Supprimer cette échéance" class="mono text-xs text-dim hover:text-red px-2 py-2">✕</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <select value=${r.type} onChange=${(e) => setRow(r.id, { type: e.target.value })} aria-label="Type d'échéance" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none">
+                <option value="partiel">Partiel / examen</option>
+                <option value="td">Rendu de TD / galop</option>
+              </select>
+              <input type="date" value=${r.date} min=${TODAY} onInput=${(e) => setRow(r.id, { date: e.target.value })} aria-label="Date" class="min-w-0 bg-panel border border-line rounded-lg px-2.5 py-2 text-sm outline-none" />
+            </div>
+          </div>`)}
+          <button type="button" onClick=${() => setRows((rs) => [...rs, { id: uid(), matiere: matieres[0], type: "partiel", date: "" }])}
+            class="mono text-xs py-2 px-4 rounded-lg border border-line text-muted hover:text-txt w-fit">+ Ajouter une échéance</button>
+          <p class="text-xs text-dim">Laisse la date vide si tu ne la connais pas encore.</p>
+        </div>`}
+
+        ${step === 3 && html`<div class="flex flex-col gap-4">
+          ${matieres.map((m) => html`<div key=${m} class="flex flex-col gap-1.5">
+            <label class="eyebrow" htmlFor=${"ob-n-" + m}>${m}</label>
+            <textarea id=${"ob-n-" + m} rows="4" value=${notes[m] || ""} onInput=${(e) => setNotes((n) => ({ ...n, [m]: e.target.value.slice(0, COURS_CAP) }))}
+              placeholder="Colle ici ton plan de cours ou tes notes (facultatif)" class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
+            ${(notes[m] || "").length > 0 && html`<span class="mono text-[11px] text-dim">${(notes[m] || "").length} caractères</span>`}
+          </div>`)}
+          <p class="text-xs text-dim">Tu pourras en ajouter à tout moment dans l'onglet « Mes cours », où le mentor les analyse.</p>
+        </div>`}
+
+        ${step === 4 && html`<div class="flex flex-col gap-5">
+          <div class="grid gap-2.5">
+            ${Object.entries(MENTORS).map(([k, m]) => html`<button key=${k} type="button" disabled=${m.pro} onClick=${() => setMentor(k)} aria-pressed=${mentor === k}
+              class="text-left rounded-xl border p-3.5 flex gap-3 items-start disabled:opacity-50"
+              style=${mentor === k ? { borderColor: "var(--brass)", background: "var(--brass-soft)" } : { borderColor: "var(--line)" }}>
+              <${Avatar} mentor=${m} size=${34} />
+              <span class="flex flex-col gap-0.5 min-w-0">
+                <span class="text-sm font-medium">${m.name} ${m.pro ? html`<span class="mono text-[10px] text-dim ml-1">Pro · bientôt</span>` : ""}</span>
+                <span class="text-xs text-muted">${m.tag}</span>
+                <span class="text-xs text-muted">${m.desc}</span>
+                <span class="text-xs text-dim italic mt-1">${m.quote}</span>
+              </span></button>`)}
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton objectif</span>
+            <div class="flex flex-wrap gap-2">${OBJECTIFS.map((o) => html`<${OChip} key=${o} on=${objectif === o} onClick=${() => setObjectif(o)}>${o}<//>`)}</div>
+          </div>
+          <div class="flex flex-col gap-2">
+            <span class="eyebrow">Ton temps de révision</span>
+            <div class="flex flex-wrap gap-2">${RYTHMES.map((o) => html`<${OChip} key=${o} on=${rythme === o} onClick=${() => setRythme(o)}>${o}<//>`)}</div>
+          </div>
+        </div>`}
+
+        ${err && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${err}</div>`}
+
+        <div class="flex items-center justify-between pt-1">
+          ${step > 0 ? html`<button type="button" onClick=${() => { setErr(""); setStep(step - 1); }} class="mono text-xs text-muted hover:text-txt px-2 py-2">← Retour</button>` : html`<span></span>`}
+          <button type="button" onClick=${next} disabled=${busy}
+            class="mono text-xs px-5 py-2.5 rounded-xl text-ink font-medium hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${busy && html`<${Spinner} />`} ${step === 4 ? "Commencer" : "Continuer"}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function MesCours({ setItems, setPage }) {
+  const prof = store.get("mj_profile", null) || { matieres: [] };
+  const [cours, setCours] = useState(() => getCours());
+  const [busy, setBusy] = useState("");
+  const [prog, setProg] = useState("");
+  const [msg, setMsg] = useState("");
+  const [extra, setExtra] = useState("");
+  const [reading, setReading] = useState("");
+  const [drag, setDrag] = useState("");
+  const matieres = [...new Set([...(prof.matieres || []), ...Object.keys(cours)])];
+
+  const update = (m, patch) => {
+    const latest = getCours();
+    const next = { ...latest, [m]: { notes: "", ...(latest[m] || {}), ...patch } };
+    if (!saveCours(next)) { setMsg("Le stockage du navigateur est plein. Raccourcis tes notes."); return false; }
+    setMsg("");
+    setCours(next);
+    refreshContext();
+    return true;
+  };
+  const setNotesFor = (m, text) => {
+    const over = text.length - COURS_CAP;
+    if (update(m, { notes: text.slice(0, COURS_CAP) }) && over > 0) setMsg(`Ton cours est très long : seuls les ${COURS_CAP.toLocaleString("fr-FR")} premiers caractères sont gardés (${over.toLocaleString("fr-FR")} ignorés). Pour la suite, crée une matière du type « ${m} (suite) ».`);
+  };
+  const importFiles = async (m, files) => {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setReading(m); setMsg("");
+    let text = (getCours()[m] || {}).notes || "";
+    let added = false;
+    const errs = [];
+    for (const f of list) {
+      try {
+        const t = (await readFileText(f)).trim();
+        if (t) { text = (text ? text + "\n\n" : "") + t; added = true; }
+        else errs.push(`${f.name} : fichier vide.`);
+      } catch (e) { errs.push(`${f.name} : ${fileErrorText(e)}`); }
+    }
+    if (added) setNotesFor(m, text);
+    if (errs.length) setMsg((p) => (p ? p + " " : "") + errs.join(" "));
+    setReading("");
+  };
+  const analyze = async (m) => {
+    const c = getCours()[m];
+    if (!c || !c.notes.trim()) return;
+    setBusy(m); setMsg("");
+    try {
+      const { digest, skipped } = await analyzeCours(m, c.notes, (i, n) => setProg(n > 1 ? `${i}/${n}` : ""));
+      update(m, { digest, skipped, analyzedLen: c.notes.length });
+      if (setItems) { setItems((xs) => xs.map((i) => i.go === "cours" && i.matiere === m && !i.done ? { ...i, done: true, doneOn: TODAY } : i)); ensureTestNudge(setItems); }
+    } catch (e) {
+      setMsg(errorText(e));
+    } finally { setBusy(""); setProg(""); }
+  };
+  const clear = (m) => { if (confirm("Vider les notes et l'analyse de « " + m + " » ?")) update(m, { notes: "", digest: undefined, skipped: undefined, analyzedLen: undefined }); };
+  const addMatiere = () => {
+    const m = clean(extra, 50);
+    if (m && !matieres.includes(m)) update(m, { notes: "" });
+    setExtra("");
+  };
+
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title="Mes cours" sub="Dépose ou colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes restent dans ton navigateur et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
+    ${msg && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${msg}</div>`}
+    ${matieres.length === 0 && html`<p class="text-sm text-muted">Aucune matière pour l'instant. Ajoute-en une ci-dessous.</p>`}
+    ${matieres.map((m) => {
+      const c = cours[m] || { notes: "" };
+      const n = (c.notes || "").length;
+      const d = c.digest;
+      const stale = d && c.analyzedLen !== n;
+      return html`<section key=${m} class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+        <div class="flex items-baseline justify-between gap-3">
+          <h2 class="text-sm font-medium">${m}</h2>
+          <span class="mono text-xs ${d && !stale ? "text-ok" : "text-dim"}">${n === 0 ? "Aucune note" : d ? (stale ? "Notes modifiées" : "Analysé") : `${n.toLocaleString("fr-FR")} caractères`}</span>
+        </div>
+        ${n === 0 && html`<label onDragOver=${(e) => { e.preventDefault(); setDrag(m); }} onDragLeave=${() => setDrag("")}
+          onDrop=${(e) => { e.preventDefault(); setDrag(""); importFiles(m, e.dataTransfer.files); }}
+          class="flex flex-col items-center justify-center gap-1 rounded-xl border border-dashed px-4 py-6 text-center cursor-pointer transition-colors"
+          style=${{ borderColor: drag === m ? "var(--brass)" : "var(--line-2)", background: drag === m ? "var(--brass-soft)" : "transparent" }}>
+          <span class="text-sm">${reading === m ? "Lecture de ton cours…" : "Glisse ton cours ici"}</span>
+          <span class="text-xs text-dim">PDF, Word ou texte · ou clique pour choisir · ou colle-le plus bas</span>
+          <input type="file" multiple accept=${FILE_ACCEPT} class="hidden" onChange=${(e) => { importFiles(m, e.target.files); e.target.value = ""; }} />
+        </label>`}
+        ${n > 0 && reading === m && html`<p class="text-xs text-dim">Lecture de ton fichier…</p>`}
+        <textarea rows=${n ? 6 : 3} value=${c.notes || ""} onInput=${(e) => setNotesFor(m, e.target.value)}
+          placeholder=${n ? "" : "…ou colle ici ton plan de cours, tes notes de CM, tes fiches"} aria-label=${"Notes de " + m}
+          class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" onClick=${() => analyze(m)} disabled=${!!busy || !n}
+            class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+            ${busy === m && html`<${Spinner} />`} ${d ? "Réanalyser" : "Analyser mes notes"}${busy === m && prog ? ` (${prog})` : ""}</button>
+          ${n > 0 && html`<label class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt cursor-pointer">Ajouter un fichier
+            <input type="file" multiple accept=${FILE_ACCEPT} class="hidden" onChange=${(e) => { importFiles(m, e.target.files); e.target.value = ""; }} /></label>`}
+          ${n > 0 && html`<button type="button" onClick=${() => clear(m)} class="mono text-xs px-3 py-2 text-dim hover:text-red">Vider</button>`}
+        </div>
+        ${stale && html`<p class="text-xs text-dim">Tes notes ont changé depuis la dernière analyse.</p>`}
+        ${d && c.skipped > 0 && html`<p class="text-xs text-dim">${c.skipped} partie(s) du cours n'ont pas pu être analysées. Relance l'analyse pour réessayer.</p>`}
+        ${d && !stale && html`<p class="text-xs text-ok">✓ Cours analysé : ${d.plan.length} parties, ${d.notions.length} notions, ${d.arrets.length} arrêts repérés.</p>`}
+        ${d && !stale && !hasResults() && setPage && html`<div><button type="button" onClick=${() => setPage("test")} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Passer le test de départ →</button></div>`}
+      </section>`;
+    })}
+    <div class="flex gap-2 max-w-md">
+      <input type="text" value=${extra} onInput=${(e) => setExtra(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") { e.preventDefault(); addMatiere(); } }}
+        class=${OINPUT} placeholder="Ajouter une matière" aria-label="Ajouter une matière" />
+      <button type="button" onClick=${addMatiere} class="mono text-xs px-4 rounded-xl border border-line text-muted hover:text-txt shrink-0">Ajouter</button>
+    </div>
+  </div>`;
+}
+
+/* ===== Test de départ ===== */
+const QZ_KEY = "mj_quiz";
+const getQuiz = () => { const q = store.get(QZ_KEY, null); return q && Array.isArray(q.results) ? q : { results: [], diag: null }; };
+const saveQuiz = (q) => store.set(QZ_KEY, q);
+const hasResults = () => getQuiz().results.some((r) => !r.flagged);
+const anyDigest = () => Object.values(getCours()).some((v) => v && v.digest);
+const BLOCAGES = ["Comprendre le cours", "Retenir et mémoriser", "Manque de temps", "M'organiser", "Rien de précis"];
+const STATUS_COLOR = { rouge: "var(--red)", orange: "var(--brass)", vert: "var(--ok)" };
+const STATUS_LABEL = { rouge: "À reprendre", orange: "À consolider", vert: "Acquis" };
+
+const QZ = { s: { phase: "intro" }, subs: new Set() };
+function setQZ(p) { QZ.s = { ...QZ.s, ...(typeof p === "function" ? p(QZ.s) : p) }; QZ.subs.forEach((f) => f()); }
+function useQZ() {
+  const [, force] = useState(0);
+  useEffect(() => { const f = () => force((x) => x + 1); QZ.subs.add(f); return () => QZ.subs.delete(f); }, []);
+  return QZ.s;
+}
+
+function bilanFor(results) {
+  const groups = {};
+  for (const r of results) {
+    if (r.flagged) continue;
+    const key = r.matiere + "|" + String(r.chapitre).toLowerCase();
+    (groups[key] = groups[key] || []).push(r);
+  }
+  return Object.values(groups).map((g) => {
+    const last = g.slice(-4);
+    const ok = last.filter((r) => r.ok).length, ko = last.length - ok;
+    return { matiere: last[0].matiere, chapitre: last[last.length - 1].chapitre, ok, ko, status: ko === 0 ? "vert" : ok === 0 ? "rouge" : "orange" };
+  });
+}
+function testContext() {
+  const q = getQuiz();
+  let s = "";
+  if (q.diag) {
+    const conf = Object.entries(q.diag.conf || {}).map(([m, n]) => `${m} ${n}/5`).join(", ");
+    if (conf || q.diag.blocage) s += ` Ressenti de l'étudiant :${conf ? " confiance " + conf + "." : ""}${q.diag.blocage ? " blocage principal : " + q.diag.blocage.toLowerCase() + "." : ""}`;
+  }
+  const b = bilanFor(q.results);
+  if (b.length) {
+    const L = (st) => b.filter((x) => x.status === st).slice(0, 6).map((x) => `${x.chapitre} (${x.matiere})`).join(" ; ");
+    const parts = [["à reprendre en priorité", L("rouge")], ["à consolider", L("orange")], ["acquis", L("vert")]].filter(([, v]) => v).map(([k, v]) => `${k} : ${v}`);
+    s += ` Résultats du test de départ — ${parts.join(". ")}.`;
+  }
+  return s.slice(0, 1000);
+}
+
+function spreadPick(n, k) {
+  if (k >= n) return Array.from({ length: n }, (_, i) => i);
+  const out = [];
+  for (let j = 0; j < k; j++) {
+    const lo = Math.floor((j * n) / k), hi = Math.max(lo + 1, Math.floor(((j + 1) * n) / k));
+    out.push(lo + Math.floor(Math.random() * (hi - lo)));
+  }
+  return out;
+}
+function shuffled(a) {
+  const b = a.slice();
+  for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; }
+  return b;
+}
+function quizPrompt(matiere, chunk, q, plan) {
+  return `Voici un extrait des notes de cours d'un étudiant en droit, matière : ${matiere}. Rédige ${q} question${q > 1 ? "s" : ""} à choix multiple pour tester sa compréhension, en t'appuyant uniquement sur cet extrait.
+Règles : 4 propositions dont une seule exacte ; les 3 autres sont plausibles mais fausses d'après l'extrait. Varie les types : notion à définir, petit cas concret à qualifier, solution d'un arrêt. Évite les détails sans enjeu. Ne pose aucune question dont la réponse ne figure pas dans l'extrait.
+"chapitre" : choisis dans cette liste l'intitulé le plus proche de la partie concernée, sinon formule-le en 6 mots au maximum : ${plan}
+"explication" : une seule phrase courte (25 mots maximum) qui justifie la bonne réponse par la règle de droit (article, principe) ou par l'arrêt qui la pose ; n'écris jamais « parce que le cours le dit » ni « selon le cours ».
+Réponds uniquement en JSON : [{"chapitre":"...","question":"...","choix":["...","...","...","..."],"bonne":0,"explication":"..."}] où "bonne" est l'indice (0 à 3) de la bonne proposition.
+EXTRAIT :
+${chunk}`;
+}
+function cleanQuestions(raw, matiere) {
+  const arr = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.questions) ? raw.questions : []);
+  const out = [];
+  for (const x of arr) {
+    if (!x || typeof x.question !== "string" || !Array.isArray(x.choix) || x.choix.length !== 4) continue;
+    const bonne = Number(x.bonne);
+    if (!Number.isInteger(bonne) || bonne < 0 || bonne > 3) continue;
+    const ch = x.choix.map((c) => clean(c, 220));
+    if (ch.some((c) => !c) || new Set(ch.map((c) => c.toLowerCase())).size < 4) continue;
+    const q = clean(x.question, 420);
+    if (q.length < 12) continue;
+    out.push({ id: uid(), matiere, chapitre: clean(x.chapitre, 80) || "Divers", q, opts: shuffled(ch.map((t, i) => ({ t, ok: i === bonne }))), why: clean(x.explication, 420) });
+  }
+  return out;
+}
+async function genTest(subjects, onProgress) {
+  const jobs = [];
+  for (const s of subjects) {
+    const all = chunkText(s.notes.slice(0, COURS_CAP));
+    const total = Math.max(4, Math.min(8, Math.round(s.notes.length / 2500)));
+    const k = Math.min(4, all.length, total);
+    const base = Math.floor(total / k), extra = total % k;
+    spreadPick(all.length, k).forEach((ci, j) => jobs.push({ m: s.m, chunk: all[ci], q: base + (j < extra ? 1 : 0), plan: s.plan }));
+  }
+  const res = new Map(subjects.map((s) => [s.m, []]));
+  let next = 0, done = 0, fatal = null, lastErr = null;
+  const worker = async () => {
+    while (!fatal) {
+      const i = next++;
+      if (i >= jobs.length) return;
+      const j = jobs[i];
+      try { res.get(j.m).push(...cleanQuestions(await askRetry(quizPrompt(j.m, j.chunk, j.q, j.plan)), j.m)); }
+      catch (e) {
+        if (e && (e.code === "invalid_json" || e.code === "failed")) lastErr = e;
+        else { fatal = e || { code: "failed" }; return; }
+      }
+      done++;
+      if (onProgress) onProgress(done, jobs.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, worker));
+  if (fatal) throw fatal;
+  const out = [];
+  for (const s of subjects) {
+    const seen = new Set();
+    const uniq = res.get(s.m).filter((x) => { const k = x.q.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    if (uniq.length < 3) throw lastErr || { code: "invalid_json" };
+    out.push(...uniq);
+  }
+  return out;
+}
+
+function planFromBilan(setItems) {
+  const b = bilanFor(getQuiz().results).filter((x) => x.status !== "vert");
+  const cur = store.get("mj_items", []);
+  const urg = (m) => {
+    const d = cur.filter((i) => i.type === "partiel" && i.matiere === m && i.date >= TODAY).map((i) => diffDays(TODAY, i.date)).sort((x, y) => x - y)[0];
+    return d === undefined ? 1 : 1 + 7 / (d + 7);
+  };
+  const top = b.map((x) => ({ ...x, score: (x.status === "rouge" ? 1 : 0.5) * urg(x.matiere) })).sort((x, y) => y.score - x.score).slice(0, 6);
+  const per = Math.max(1, parseInt((((store.get("mj_profile", null) || {}).rythme || "").match(/\d/) || ["1"])[0], 10));
+  const tasks = top.map((x, i) => ({ id: uid(), date: isoIn(Math.floor(i / per)), title: `Revoir ${x.chapitre} (${x.matiere})`, type: "revision", matiere: x.matiere, done: false, src: "test" }));
+  setItems((xs) => [...xs.filter((i) => !(i.src === "test" && !i.done)).map((i) => i.go === "test" && !i.done ? { ...i, done: true, doneOn: TODAY } : i), ...tasks]);
+  return tasks.length;
+}
+function ensureTestNudge(setItems) {
+  if (!setItems || !anyDigest() || hasResults()) return;
+  const m = Object.keys(getCours()).find((k) => (getCours()[k] || {}).digest);
+  setItems((xs) => xs.some((i) => i.go === "test") ? xs : [...xs, { id: uid(), date: TODAY, title: "Fais ton test de départ", type: "tache", matiere: m, done: false, go: "test" }]);
+}
+
+function bilanSentence(b) {
+  const by = (st) => b.filter((x) => x.status === st);
+  const names = (a) => a.slice(0, 3).map((x) => `« ${x.chapitre} »`).join(", ");
+  const r = by("rouge"), o = by("orange"), v = by("vert");
+  if (!b.length) return "";
+  if (r.length) return `Priorité : ${names(r)}.${o.length ? ` Ensuite à consolider : ${names(o)}.` : ""}${v.length ? ` Le reste tient : ${v.length} partie${v.length > 1 ? "s" : ""} acquise${v.length > 1 ? "s" : ""}.` : ""}`;
+  if (o.length) return `Pas de point noir. À consolider : ${names(o)}.${v.length ? ` ${v.length} partie${v.length > 1 ? "s" : ""} acquise${v.length > 1 ? "s" : ""}.` : ""}`;
+  return "Tout ce qui a été testé est acquis. Refais un test dans quelques jours pour vérifier que ça tient.";
+}
+
+function BilanView({ fresh, nTasks, setPage, onAgain }) {
+  const b = bilanFor(getQuiz().results);
+  const order = { rouge: 0, orange: 1, vert: 2 };
+  const mats = [...new Set(b.map((x) => x.matiere))];
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title=${fresh ? "Ton bilan" : "Mon bilan"} sub="Chaque ligne est une partie de ton cours, avec le résultat de tes questions." />
+    <div class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-1">
+      <div class="eyebrow">${MENTOR_SHORT}</div>
+      <p class="display text-[1.05rem]">${bilanSentence(b) || "Pas encore de résultat exploitable."}</p>
+      ${fresh && nTasks > 0 && html`<p class="text-sm text-muted">J'ai ajouté ${nTasks} séance${nTasks > 1 ? "s" : ""} de révision à ton Pilotage, dans cet ordre.</p>`}
+    </div>
+    ${mats.map((m) => html`<section key=${m} class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-2">
+      <h2 class="text-sm font-medium">${m}</h2>
+      ${b.filter((x) => x.matiere === m).sort((x, y) => order[x.status] - order[y.status]).map((x) => html`<div key=${x.chapitre} class="flex items-center gap-3 text-sm">
+        <span class="w-2.5 h-2.5 rounded-full shrink-0" style=${{ background: STATUS_COLOR[x.status] }} aria-hidden="true"></span>
+        <span class="flex-1 min-w-0">${x.chapitre}</span>
+        <span class="mono text-xs text-dim shrink-0">${STATUS_LABEL[x.status]} · ${x.ok}/${x.ok + x.ko}</span>
+      </div>`)}
+    </section>`)}
+    <div class="flex flex-wrap gap-2">
+      ${fresh && html`<button type="button" onClick=${() => setPage("pilotage")} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Voir mon Pilotage →</button>`}
+      <button type="button" onClick=${onAgain} class=${fresh ? "mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt" : "mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110"} style=${fresh ? {} : { background: "var(--brass)" }}>Refaire un test</button>
+    </div>
+  </div>`;
+}
+
+function TestDepart({ setItems, setPage }) {
+  const s = useQZ();
+  useEffect(() => () => { if (QZ.s.phase === "result") QZ.s = { ...QZ.s, phase: "intro", again: false }; }, []);
+  const prof = store.get("mj_profile", null) || {};
+  const cours = getCours();
+  const ready = [...new Set([...(prof.matieres || []), ...Object.keys(cours)])].filter((m) => cours[m] && cours[m].digest && (cours[m].notes || "").trim());
+  const sel = s.sel || Object.fromEntries(ready.map((m) => [m, true]));
+  const chosen = ready.filter((m) => sel[m]);
+  const conf = s.conf || {};
+
+  const start = async () => {
+    if (!chosen.length) return;
+    const q = getQuiz();
+    q.diag = { conf: Object.fromEntries(chosen.filter((m) => conf[m]).map((m) => [m, conf[m]])), blocage: s.blocage || "", at: TODAY };
+    saveQuiz(q); refreshContext();
+    setQZ({ phase: "gen", prog: [0, 1], err: "" });
+    try {
+      const subjects = chosen.map((m) => ({ m, notes: cours[m].notes, plan: (cours[m].digest.plan || []).join(" ; ").slice(0, 1500) }));
+      const questions = await genTest(subjects, (d, n) => setQZ({ prog: [d, n] }));
+      setQZ({ phase: "quiz", questions, idx: 0, picked: null, flagged: false, answered: 0 });
+    } catch (e) { setQZ({ phase: "error", err: errorText(e) }); }
+  };
+  const record = (ok, idk, i) => {
+    const q = s.questions[s.idx];
+    const st = getQuiz();
+    st.results.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, ok, idk, date: TODAY, q: q.q.slice(0, 160) });
+    st.results = st.results.slice(-400);
+    saveQuiz(st);
+    bankAdd(q, ok);
+    setQZ({ picked: i, flagged: false, answered: (s.answered || 0) + 1 });
+  };
+  const flag = () => {
+    const q = s.questions[s.idx];
+    const st = getQuiz();
+    const r = st.results.find((x) => x.id === q.id);
+    if (r) r.flagged = true;
+    saveQuiz(st);
+    bankRemove(q.id);
+    setQZ({ flagged: true });
+  };
+  const finish = () => {
+    refreshContext();
+    const n = hasResults() ? planFromBilan(setItems) : 0;
+    refreshContext();
+    setQZ({ phase: "result", nTasks: n, again: false });
+  };
+  const next = () => {
+    if (s.idx + 1 >= s.questions.length) return finish();
+    setQZ({ idx: s.idx + 1, picked: null, flagged: false });
+  };
+
+  if (s.phase === "gen") {
+    const [d, n] = s.prog || [0, 1];
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <${PageHead} title="Test de départ" sub="Le mentor prépare tes questions à partir de tes notes." />
+      <div class="rounded-2xl border border-line bg-panel p-5 flex flex-col gap-3" role="status">
+        <div class="flex items-center gap-2 text-sm"><${Spinner} /> Préparation des questions… ${d}/${n}</div>
+        <div class="h-1.5 rounded-full overflow-hidden" style=${{ background: "var(--panel-2)" }}><div class="h-full" style=${{ width: Math.round((100 * d) / n) + "%", background: "var(--brass)", transition: "width .3s" }}></div></div>
+        <p class="text-xs text-dim">Compte 20 à 40 secondes.</p>
+      </div>
+    </div>`;
+  }
+  if (s.phase === "error") {
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <${PageHead} title="Test de départ" />
+      <div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${s.err}</div>
+      <div><button type="button" onClick=${() => setQZ({ phase: "intro", err: "" })} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Réessayer</button></div>
+    </div>`;
+  }
+  if (s.phase === "quiz") {
+    const q = s.questions[s.idx];
+    const total = s.questions.length;
+    const answered = s.picked !== null && s.picked !== undefined;
+    const good = q.opts.findIndex((o) => o.ok);
+    return html`<div class="flex flex-col gap-4 max-w-3xl">
+      <div class="flex items-center justify-between gap-3">
+        <span class="mono text-xs text-muted">${q.matiere} · ${q.chapitre}</span>
+        <span class="mono text-xs text-dim shrink-0">Question ${s.idx + 1} sur ${total}</span>
+      </div>
+      <div class="h-1 rounded-full overflow-hidden" style=${{ background: "var(--panel-2)" }}><div class="h-full" style=${{ width: Math.round((100 * (s.idx + (answered ? 1 : 0))) / total) + "%", background: "var(--brass)", transition: "width .3s" }}></div></div>
+      <h2 class="display text-[1.15rem] leading-snug" id="qz-q">${q.q}</h2>
+      <div class="flex flex-col gap-2" role="group" aria-labelledby="qz-q">
+        ${q.opts.map((o, i) => {
+          const picked = s.picked === i;
+          const style = !answered ? {} : o.ok ? { borderColor: "var(--ok)", background: "rgba(79,191,139,.10)" } : picked ? { borderColor: "var(--red)", background: "var(--red-soft)" } : { opacity: 0.55 };
+          return html`<button key=${i} type="button" disabled=${answered} onClick=${() => record(o.ok, false, i)}
+            class="qz-opt w-full text-left rounded-xl border border-line bg-panel px-4 py-3 text-sm flex gap-3 hover:border-line2 disabled:cursor-default" style=${style}>
+            <span class="mono text-xs text-dim pt-0.5">${"ABCD"[i]}</span><span>${o.t}</span></button>`;
+        })}
+        ${!answered && html`<button type="button" onClick=${() => record(false, true, -1)} class="qz-idk mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt self-start">Je ne sais pas</button>`}
+      </div>
+      ${answered && html`<div class="rounded-xl border border-line p-3 text-sm flex flex-col gap-2" style=${{ background: "var(--panel-2)" }} role="status">
+        <p><span class="font-medium" style=${{ color: s.picked === good ? "var(--ok)" : "var(--red)" }}>${s.picked === good ? "Bonne réponse." : s.picked === -1 ? "Pas de souci, c'est utile à savoir." : "Pas tout à fait."}</span>
+          ${s.picked !== good && html` La bonne réponse est ${"ABCD"[good]}.`}</p>
+        ${q.why && html`<p class="text-muted">${q.why}</p>`}
+      </div>`}
+      <div class="flex flex-wrap items-center gap-2">
+        ${answered && html`<button type="button" id="qz-next" onClick=${next} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${s.idx + 1 >= total ? "Voir mon bilan" : "Suivant →"}</button>`}
+        ${answered && html`<button type="button" id="qz-flag" onClick=${flag} disabled=${s.flagged} class="mono text-xs px-3 py-2 text-dim hover:text-txt disabled:opacity-70">${s.flagged ? "✓ Question écartée" : "Question fausse ou mal posée"}</button>`}
+        <button type="button" id="qz-stop" onClick=${() => (s.answered ? finish() : setQZ({ phase: "intro" }))} class="mono text-xs px-3 py-2 text-dim hover:text-txt ml-auto">Arrêter</button>
+      </div>
+    </div>`;
+  }
+  if (s.phase === "result" || (s.phase === "intro" && hasResults() && !s.again)) {
+    return html`<${BilanView} fresh=${s.phase === "result"} nTasks=${s.nTasks || 0} setPage=${setPage} onAgain=${() => setQZ({ phase: "intro", again: true })} />`;
+  }
+  // intro
+  const todo = (prof.matieres || []).filter((m) => !ready.includes(m));
+  return html`<div class="flex flex-col gap-4 max-w-3xl">
+    <${PageHead} title="Test de départ" sub="Des questions tirées de tes propres notes. En quelques minutes, le mentor voit ce que tu maîtrises et ce qu'il faut reprendre en premier." />
+    ${ready.length === 0 && html`<div class="rounded-2xl border border-line bg-panel p-5 flex flex-col gap-3">
+      <p class="text-sm">Pour préparer le test, le mentor a d'abord besoin d'un cours analysé.</p>
+      <div><button type="button" onClick=${() => setPage("cours")} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>Aller à Mes cours →</button></div>
+    </div>`}
+    ${ready.length > 0 && html`<section class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+      <div class="eyebrow">Matières à tester</div>
+      <div class="flex flex-wrap gap-2">${ready.map((m) => html`<${OChip} key=${m} on=${!!sel[m]} onClick=${() => setQZ({ sel: { ...sel, [m]: !sel[m] } })}>${m}<//>`)}</div>
+      ${todo.length > 0 && html`<p class="text-xs text-dim">Pas encore analysé : ${todo.join(", ")}.</p>`}
+    </section>
+    <section class="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+      <div class="eyebrow">Ton ressenti · facultatif</div>
+      ${chosen.map((m) => html`<div key=${m} class="flex flex-col gap-1.5">
+        <span class="text-sm">${m} : à quel point te sens-tu prêt ?</span>
+        <div class="flex flex-wrap gap-2">${[1, 2, 3, 4, 5].map((n) => html`<${OChip} key=${n} on=${conf[m] === n} onClick=${() => setQZ({ conf: { ...conf, [m]: n } })}>${n}<//>`)}</div>
+      </div>`)}
+      <p class="text-xs text-dim">1 = pas du tout sûr de moi, 5 = très sûr de moi.</p>
+      <span class="text-sm pt-1">Ce qui te bloque le plus en ce moment :</span>
+      <div class="flex flex-wrap gap-2">${BLOCAGES.map((b) => html`<${OChip} key=${b} on=${s.blocage === b} onClick=${() => setQZ({ blocage: b })}>${b}<//>`)}</div>
+    </section>
+    <div class="flex flex-col gap-2 items-start">
+      <button type="button" id="qz-start" onClick=${start} disabled=${!chosen.length} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-50" style=${{ background: "var(--brass)" }}>Commencer le test</button>
+      <p class="text-xs text-dim max-w-[60ch]">Environ ${Math.max(3, chosen.length * 4)} minutes. Quand tu hésites, réponds « Je ne sais pas » plutôt que de deviner : le mentor te lira mieux.</p>
+    </div>`}
+  </div>`;
+}
+
+/* ===== Question du jour ===== */
+const BANK_KEY = "mj_qbank", DAILY_KEY = "mj_daily";
+const DAILY_MAX = 3, INTERVALS = [1, 3, 7, 16];
+const getBank = () => { const b = store.get(BANK_KEY, []); return Array.isArray(b) ? b : []; };
+const saveBank = (b) => store.set(BANK_KEY, b.slice(-300));
+function bankAdd(q, ok) {
+  const box = ok ? 1 : 0;
+  const b = getBank().filter((x) => x.id !== q.id);
+  b.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, q: q.q, opts: q.opts, why: q.why, box, due: isoIn(INTERVALS[box]) });
+  saveBank(b);
+}
+function bankUpdate(id, ok) {
+  const b = getBank();
+  const x = b.find((e) => e.id === id);
+  if (!x) return;
+  x.box = ok ? Math.min(3, x.box + 1) : 0;
+  x.due = isoIn(INTERVALS[x.box]);
+  saveBank(b);
+}
+const bankRemove = (id) => saveBank(getBank().filter((x) => x.id !== id));
+const getDaily = () => { const d = store.get(DAILY_KEY, null); return d && d.date === TODAY ? d : { date: TODAY, done: 0, ok: 0, ids: [] }; };
+const dueQuestions = () => {
+  const d = getDaily();
+  return getBank().filter((x) => x.due <= TODAY && !d.ids.includes(x.id)).sort((a, b) => a.due.localeCompare(b.due) || a.box - b.box);
+};
+
+function DailyQuestion() {
+  const [cur, setCur] = useState(null);
+  const [picked, setPicked] = useState(null);
+  const [flagged, setFlagged] = useState(false);
+  const [, force] = useState(0);
+  const daily = getDaily();
+  const due = dueQuestions();
+  const q = cur || (daily.done < DAILY_MAX ? due[0] : null);
+  const answered = picked !== null;
+
+  if (!q) {
+    if (!daily.done) return null;
+    return html`<section class="rounded-2xl border border-line bg-panel px-5 py-3 flex items-center gap-3 text-sm" aria-label="Question du jour">
+      <span style=${{ color: "var(--ok)" }}>✓</span><span>Question du jour faite · ${daily.ok}/${daily.done}. Reviens demain pour la suite.</span></section>`;
+  }
+  const total = Math.min(DAILY_MAX, daily.done + due.length);
+  const num = answered ? daily.done : daily.done + 1;
+  const good = q.opts.findIndex((o) => o.ok);
+  const answer = (i) => {
+    const ok = i >= 0 && q.opts[i].ok;
+    setCur(q); setPicked(i); setFlagged(false);
+    bankUpdate(q.id, ok);
+    const d = getDaily();
+    d.ids = [...d.ids, q.id]; d.done += 1; d.ok += ok ? 1 : 0;
+    store.set(DAILY_KEY, d);
+    const st = getQuiz();
+    st.results.push({ id: q.id, matiere: q.matiere, chapitre: q.chapitre, ok, idk: i < 0, date: TODAY, q: q.q.slice(0, 160), daily: true });
+    st.results = st.results.slice(-400);
+    saveQuiz(st);
+    refreshContext();
+  };
+  const flag = () => {
+    setFlagged(true);
+    bankRemove(q.id);
+    const st = getQuiz();
+    st.results.forEach((r) => { if (r.id === q.id) r.flagged = true; });
+    saveQuiz(st);
+  };
+  const next = () => { setCur(null); setPicked(null); setFlagged(false); force((x) => x + 1); };
+
+  return html`<section class="rounded-2xl border border-line bg-panel" aria-label="Question du jour">
+    <div class="flex items-center justify-between gap-3 px-5 sm:px-6 py-2.5 border-b border-line">
+      <span class="eyebrow">Question du jour · ${q.matiere}</span>
+      <span class="mono text-xs text-dim shrink-0">${num} sur ${total}</span>
+    </div>
+    <div class="px-5 sm:px-6 py-4 flex flex-col gap-3">
+      <p class="display text-[1.05rem] leading-snug" id="dq-q">${q.q}</p>
+      <div class="flex flex-col gap-2" role="group" aria-labelledby="dq-q">
+        ${q.opts.map((o, i) => {
+          const style = !answered ? {} : o.ok ? { borderColor: "var(--ok)", background: "rgba(79,191,139,.10)" } : picked === i ? { borderColor: "var(--red)", background: "var(--red-soft)" } : { opacity: 0.55 };
+          return html`<button key=${i} type="button" disabled=${answered} onClick=${() => answer(i)}
+            class="dq-opt w-full text-left rounded-xl border border-line px-4 py-2.5 text-sm flex gap-3 hover:border-line2 disabled:cursor-default" style=${style}>
+            <span class="mono text-xs text-dim pt-0.5">${"ABCD"[i]}</span><span>${o.t}</span></button>`;
+        })}
+        ${!answered && html`<button type="button" onClick=${() => answer(-1)} class="dq-idk mono text-xs px-4 py-2 rounded-[10px] border border-line text-muted hover:text-txt self-start">Je ne sais pas</button>`}
+      </div>
+      ${answered && html`<div class="rounded-xl border border-line p-3 text-sm flex flex-col gap-1.5" style=${{ background: "var(--panel-2)" }} role="status">
+        <p><span class="font-medium" style=${{ color: picked === good ? "var(--ok)" : "var(--red)" }}>${picked === good ? "Bonne réponse." : picked === -1 ? "Pas de souci, elle reviendra." : "Pas tout à fait."}</span>
+          ${picked !== good && html` La bonne réponse est ${"ABCD"[good]}.`}</p>
+        ${q.why && html`<p class="text-muted">${q.why}</p>`}
+      </div>`}
+      ${answered && html`<div class="flex flex-wrap items-center gap-2">
+        <button type="button" id="dq-next" onClick=${next} class="mono text-xs px-4 py-2 rounded-[10px] text-ink font-medium hover:brightness-110" style=${{ background: "var(--brass)" }}>${daily.done >= DAILY_MAX || due.length === 0 ? "Terminer" : "Suivante →"}</button>
+        <button type="button" id="dq-flag" onClick=${flag} disabled=${flagged} class="mono text-xs px-3 py-2 text-dim hover:text-txt disabled:opacity-70">${flagged ? "✓ Question écartée" : "Question fausse ou mal posée"}</button>
+      </div>`}
+    </div>
+  </section>`;
+}
+
+const AUTH_ERRORS = {
+  bad_login: "E-mail ou mot de passe incorrect.",
+  bad_code: "Code d'invitation invalide.",
+  email_exists: "Un compte existe déjà avec cet e-mail. Connecte-toi.",
+  weak_password: "Choisis un mot de passe d'au moins 8 caractères.",
+  invalid_email: "Cette adresse e-mail n'a pas l'air valide.",
+  same_password: "Choisis un mot de passe différent de l'ancien.",
+  rate_limited: "Trop de tentatives. Attends quelques minutes puis réessaie.",
+  network: "Connexion impossible. Vérifie ton réseau et réessaie.",
+  auth: "Le lien a expiré. Redemande un e-mail de réinitialisation."
+};
+const authErr = (e) => AUTH_ERRORS[e && e.code] || "Une erreur est survenue. Réessaie dans un instant.";
+
+function AuthShell({ title, sub, children }) {
+  return html`<div class="min-h-screen flex flex-col items-center px-4 py-8 sm:py-12">
+    <div class="w-full max-w-md flex flex-col gap-5">
+      <div class="flex items-center gap-2.5">
+        <span class="w-7 h-7 rounded-lg grid place-items-center text-xs font-medium text-ink" style=${{ background: "var(--brass)" }}>⚖</span>
+        <span class="display font-medium tracking-tight">Mentor Juris</span>
+      </div>
+      <div class="rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-5">
+        <div class="flex flex-col gap-1">
+          <h1 class="display text-2xl leading-tight">${title}</h1>
+          ${sub && html`<p class="text-muted text-sm">${sub}</p>`}
+        </div>
+        ${children}
+      </div>
+    </div>
+  </div>`;
+}
+const BTN = "mono text-sm px-4 py-2.5 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-60 flex items-center justify-center gap-2";
+
+const INVITE = (() => {
+  try {
+    const q = new URLSearchParams(location.search), c = (q.get("invite") || "").trim();
+    if (c) { sessionStorage.setItem("mj_invite", c); q.delete("invite"); history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q : "") + location.hash); }
+    return sessionStorage.getItem("mj_invite") || "";
+  } catch { return ""; }
+})();
+
+function AuthScreen({ onIn, notice }) {
+  const [mode, setMode] = useState(INVITE ? "signup" : "login");
+  const [email, setEmail] = useState("");
+  const [pw, setPw] = useState("");
+  const [code, setCode] = useState(INVITE);
+  const [showCode, setShowCode] = useState(!INVITE);
+  const [err, setErr] = useState("");
+  const [info, setInfo] = useState(notice || "");
+  const [busy, setBusy] = useState(false);
+  const go = (m) => { setMode(m); setErr(""); setInfo(""); };
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(""); setInfo("");
+    const mail = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(mail)) return setErr(AUTH_ERRORS.invalid_email);
+    if (mode !== "forgot" && pw.length < (mode === "signup" ? 8 : 1)) return setErr(mode === "signup" ? AUTH_ERRORS.weak_password : "Entre ton mot de passe.");
+    if (mode === "signup" && !code.trim()) return setErr("Entre le code d'invitation qu'on t'a donné.");
+    setBusy(true);
+    try {
+      if (mode === "forgot") { await auth.recover(mail); setInfo("Si un compte existe pour cette adresse, un e-mail vient de partir. Ouvre le lien qu'il contient."); }
+      else {
+        if (mode === "signup") { await auth.signUp(mail, pw, code.trim()); try { sessionStorage.removeItem("mj_invite"); } catch {} }
+        else await auth.signIn(mail, pw);
+        onIn();
+      }
+    } catch (x) { if (x && x.code === "bad_code") setShowCode(true); setErr(authErr(x)); }
+    setBusy(false);
+  }
+
+  const invited = mode === "signup" && !showCode;
+  const titles = { login: "Connexion", signup: invited ? "Ton accès est prêt" : "Créer ton compte", forgot: "Mot de passe oublié" };
+  const subs = { login: "Retrouve ton calendrier, tes cours et tes tests sur tous tes appareils.", signup: invited ? "Choisis ton e-mail et un mot de passe : ton mentor t'attend juste après." : "L'accès se fait sur invitation pendant la bêta.", forgot: "Entre ton e-mail : tu recevras un lien pour choisir un nouveau mot de passe." };
+  return html`<${AuthShell} title=${titles[mode]} sub=${subs[mode]}>
+    <form onSubmit=${submit} class="flex flex-col gap-4" noValidate>
+      <div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-email">E-mail</label>
+        <input id="au-email" type="email" autoComplete="email" value=${email} onInput=${(e) => setEmail(e.target.value)} class=${OINPUT} />
+      </div>
+      ${mode !== "forgot" && html`<div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-pw">Mot de passe</label>
+        <input id="au-pw" type="password" autoComplete=${mode === "signup" ? "new-password" : "current-password"} value=${pw} onInput=${(e) => setPw(e.target.value)} class=${OINPUT} placeholder=${mode === "signup" ? "8 caractères minimum" : ""} />
+      </div>`}
+      ${invited && html`<p id="au-invited" class="text-xs" style=${{ color: "var(--ok)" }}>✓ Invitation appliquée</p>`}
+      ${mode === "signup" && showCode && html`<div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="au-code">Code d'invitation</label>
+        <input id="au-code" type="password" autoComplete="off" value=${code} onInput=${(e) => setCode(e.target.value)} class=${OINPUT} placeholder="Le code qu'on t'a donné" />
+      </div>`}
+      ${err && html`<p id="au-err" class="text-sm" style=${{ color: "var(--red)" }}>${err}</p>`}
+      ${info && html`<p id="au-info" class="text-sm" style=${{ color: "var(--ok)" }}>${info}</p>`}
+      <button id="au-submit" type="submit" disabled=${busy} class=${BTN} style=${{ background: "var(--brass)" }}>
+        ${busy && html`<${Spinner} />`} ${mode === "login" ? "Se connecter" : mode === "signup" ? "Créer mon compte" : "Envoyer le lien"}</button>
+      <div class="flex flex-wrap justify-between gap-2 text-xs">
+        ${mode === "login"
+          ? html`<button type="button" id="au-to-signup" onClick=${() => go("signup")} class="text-muted hover:text-txt">J'ai un code d'invitation</button>
+                 <button type="button" id="au-to-forgot" onClick=${() => go("forgot")} class="text-muted hover:text-txt">Mot de passe oublié ?</button>`
+          : html`<button type="button" id="au-to-login" onClick=${() => go("login")} class="text-muted hover:text-txt">← J'ai déjà un compte</button>`}
+      </div>
+      ${mode === "signup" && html`<p class="text-xs text-dim">Ton compte et tes données sont hébergés dans l'Union européenne (Supabase, Paris). Les textes que tu soumets sont traités par une IA (Anthropic). Tu peux supprimer ton compte à tout moment. <a href="/landing.html#confidentialite" target="_blank" rel="noopener" class="underline" style=${{ color: "var(--brass)" }}>Confidentialité</a></p>`}
+    </form>
+  <//>`;
+}
+
+function readRecovery() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, ""));
+  if (h.get("error_code") || h.get("error")) { history.replaceState(null, "", location.pathname); return { error: true }; }
+  if (h.get("type") === "recovery" && h.get("access_token")) {
+    history.replaceState(null, "", location.pathname);
+    return { access_token: h.get("access_token"), refresh_token: h.get("refresh_token"), expires_in: h.get("expires_in"), expires_at: Number(h.get("expires_at")) || undefined };
+  }
+  return null;
+}
+
+function NewPassword({ rec, onDone }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    if (pw.length < 8) return setErr(AUTH_ERRORS.weak_password);
+    setBusy(true); setErr("");
+    try {
+      await auth.setPassword(pw, rec.access_token);
+      const r = await auth.call("/auth/v1/user", { headers: { Authorization: "Bearer " + rec.access_token } });
+      const user = r.ok ? await r.json() : null;
+      wipeLocal();
+      auth.save({ ...rec, user });
+      onDone();
+    } catch (x) { setErr(authErr(x)); setBusy(false); }
+  }
+  return html`<${AuthShell} title="Nouveau mot de passe" sub="Choisis ton nouveau mot de passe. Tu resteras connecté sur cet appareil.">
+    <form onSubmit=${submit} class="flex flex-col gap-4" noValidate>
+      <div class="flex flex-col gap-1.5">
+        <label class="eyebrow" htmlFor="np-pw">Nouveau mot de passe</label>
+        <input id="np-pw" type="password" autoComplete="new-password" value=${pw} onInput=${(e) => setPw(e.target.value)} class=${OINPUT} placeholder="8 caractères minimum" />
+      </div>
+      ${err && html`<p class="text-sm" style=${{ color: "var(--red)" }}>${err}</p>`}
+      <button id="np-submit" type="submit" disabled=${busy} class=${BTN} style=${{ background: "var(--brass)" }}>${busy && html`<${Spinner} />`} Enregistrer</button>
+    </form>
+  <//>`;
+}
+
+const SYNC_LABEL = { ok: "Synchronisé", pending: "Modifications en attente…", saving: "Enregistrement…", offline: "Hors ligne : nouvel essai automatique", auth: "Session expirée : recharge la page" };
+function AccountMenu({ onReset }) {
+  const [open, setOpen] = useState(false);
+  const [st, setSt] = useState(sync.status);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { sync.listeners.add(setSt); return () => sync.listeners.delete(setSt); }, []);
+  const email = ((auth.session() || {}).user || {}).email || "";
+  const dot = st === "ok" ? "var(--ok)" : st === "offline" || st === "auth" ? "var(--red)" : "var(--brass)";
+  async function del() {
+    const t = window.prompt("Suppression définitive du compte et de toutes tes données (calendrier, cours, tests). Tape SUPPRIMER pour confirmer :");
+    if ((t || "").trim().toUpperCase() !== "SUPPRIMER") return;
+    setBusy(true); setErr("");
+    try { await auth.deleteAccount(); } catch (x) { setErr(x.code === "auth" ? SYNC_LABEL.auth : "La suppression a échoué. Réessaie ou écris à mentorjuris.contact@gmail.com."); setBusy(false); }
+  }
+  return html`<div class="fixed bottom-3 right-3 z-40 flex flex-col items-end gap-2">
+    ${open && html`<div id="acct-panel" class="w-72 rounded-xl border border-line p-4 flex flex-col gap-3 text-sm" style=${{ background: "var(--panel)" }}>
+      <div class="flex flex-col gap-0.5">
+        <span class="eyebrow">Compte</span>
+        <span class="truncate">${email}</span>
+        <span id="acct-sync" class="text-xs text-muted flex items-center gap-1.5"><span class="sq" style=${{ background: dot }}></span>${SYNC_LABEL[st]}</span>
+      </div>
+      <button type="button" onClick=${() => { setOpen(false); onReset(); }} class="text-left text-muted hover:text-txt">Refaire la configuration</button>
+      <button type="button" id="acct-logout" disabled=${busy} onClick=${() => { setBusy(true); auth.signOut(); }} class="text-left text-muted hover:text-txt">Se déconnecter</button>
+      <button type="button" id="acct-delete" disabled=${busy} onClick=${del} class="text-left hover:brightness-110" style=${{ color: "var(--red)" }}>Supprimer mon compte</button>
+      ${err && html`<p class="text-xs" style=${{ color: "var(--red)" }}>${err}</p>`}
+    </div>`}
+    <button id="acct-btn" type="button" onClick=${() => setOpen((o) => !o)} aria-expanded=${open} class="mono text-[11px] px-2.5 py-1.5 rounded-lg border border-line text-dim hover:text-muted flex items-center gap-1.5" style=${{ background: "var(--ink)" }}>
+      <span class="sq" style=${{ background: dot }}></span>Compte</button>
+  </div>`;
+}
+
+function Root() {
+  const [rec] = useState(readRecovery);
+  const [phase, setPhase] = useState(() => rec && rec.access_token ? "recovery" : auth.session() ? "loading" : "auth");
+  const [profile, setProfile] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
+
+  useEffect(() => {
+    if (phase !== "loading") return;
+    setLoadErr("");
+    sync.pull().then(() => { setProfile(store.get("mj_profile", null)); setPhase("app"); })
+      .catch((e) => { if (e.code === "auth") { wipeLocal(); setPhase("auth"); } else setLoadErr(e.code === "network" ? AUTH_ERRORS.network : "Impossible de récupérer tes données pour le moment."); });
+  }, [phase]);
+
+  if (phase === "recovery") return html`<${NewPassword} rec=${rec} onDone=${() => setPhase("loading")} />`;
+  if (phase === "auth") return html`<${AuthScreen} onIn=${() => setPhase("loading")} notice=${rec && rec.error ? "Ce lien a expiré ou a déjà servi. Redemande un e-mail depuis « Mot de passe oublié »." : ""} />`;
+  if (phase === "loading") return html`<div class="min-h-screen grid place-items-center px-4">
+    ${loadErr
+      ? html`<div class="flex flex-col items-center gap-3 text-sm text-center"><p class="text-muted">${loadErr}</p>
+          <div class="flex gap-2"><button type="button" onClick=${() => { setPhase("x"); setTimeout(() => setPhase("loading")); }} class=${BTN} style=${{ background: "var(--brass)" }}>Réessayer</button>
+          <button type="button" onClick=${() => auth.signOut()} class="mono text-sm px-4 py-2.5 text-muted hover:text-txt">Se déconnecter</button></div></div>`
+      : html`<div class="flex items-center gap-2 text-muted text-sm"><${Spinner} /> Récupération de tes données…</div>`}
+  </div>`;
+  if (phase !== "app") return null;
+
+  if (!profile || !Array.isArray(profile.matieres)) return html`<${React.Fragment}><${Onboarding} onDone=${setProfile} /><${AccountMenu} onReset=${() => {}} /><//>`;
+  applyProfileContext(profile);
+  const reset = () => {
+    if (!confirm("Refaire la configuration ? Ton calendrier actuel sera remplacé. Tes notes de cours sont conservées.")) return;
+    store.set("mj_profile", null);
+    store.set("mj_items", []);
+    setProfile(null);
+  };
+  return html`<${React.Fragment}>
+    <${App} />
+    <${AccountMenu} onReset=${reset} />
+  <//>`;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(html`<${Root} />`);
+</script>
+</body>
+</html>
