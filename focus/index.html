@@ -1,0 +1,766 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0D1220">
+<meta name="robots" content="noindex">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Focus">
+<link rel="manifest" href="/focus/manifest.json">
+<link rel="icon" type="image/png" href="/focus/icon-192.png">
+<link rel="apple-touch-icon" href="/focus/apple-touch-icon.png">
+<title>Focus</title>
+<style>
+:root{
+  --bg:#0D1220; --panel:#141C32; --line:#25304D; --text:#F3EBD8; --muted:#97A1BC;
+  --gold:#D8B15F; --gold-ink:#1A1405; --sage:#8FB9A8; --note:#1B2540;
+}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:"Avenir Next","Segoe UI",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+.wrap{max-width:1000px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+h1{margin:0;font-size:20px;font-weight:600;letter-spacing:.01em}
+.link{background:none;border:0;color:var(--muted);cursor:pointer;padding:8px 4px;font-size:15px}
+.link:hover{color:var(--text)}
+
+main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+.col{display:grid;gap:16px;min-width:0}
+@media(min-width:880px){
+  main{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+  .col{gap:20px}
+}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:22px}
+@media(max-width:480px){.card{padding:18px}}
+.muted{color:var(--muted)}
+.small{font-size:14px;margin:0}
+
+/* Boutons */
+.btn{border:1px solid var(--line);background:transparent;border-radius:999px;padding:11px 20px;cursor:pointer;color:var(--text)}
+.btn:hover{border-color:var(--muted)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn:disabled:hover{border-color:var(--line)}
+.btn.primary{background:var(--gold);border-color:var(--gold);color:var(--gold-ink);font-weight:600;min-width:156px}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.sm{padding:7px 14px;font-size:14px}
+
+/* Message */
+.msg{background:var(--note);border:1px solid var(--line);border-left:3px solid var(--gold);
+  padding:12px 14px;border-radius:10px;margin:0 0 16px;font-size:15px}
+.msg[hidden]{display:none}
+
+/* Réglages */
+#settings[hidden]{display:none}
+#settings{margin-bottom:16px}
+.fields{display:grid;gap:14px 24px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.fields label{display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--muted)}
+.pair{display:flex;align-items:center;gap:8px;color:var(--text)}
+.pair input{width:72px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.backup{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.backup p{flex-basis:100%;margin:0}
+
+/* Aujourd'hui */
+.lbl{margin:0;font-size:15px;color:var(--muted)}
+.remain{margin:4px 0 16px;font-size:clamp(44px,9vw,64px);font-weight:300;line-height:1.05;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.done .lbl,.done .remain{color:var(--gold)}
+.bar{height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--gold);border-radius:99px}
+.worked{margin:10px 0 0}
+
+/* Chrono */
+.tabs{display:flex;gap:4px;justify-content:center;margin-bottom:16px;flex-wrap:wrap}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:6px 12px;cursor:pointer;font-size:15px}
+.tab:hover{color:var(--text)}
+.tab[aria-pressed="true"]{color:var(--text);border-bottom-color:var(--gold)}
+.brk .tab[aria-pressed="true"]{border-bottom-color:var(--sage)}
+.ringbox{position:relative;width:min(280px,72vw);aspect-ratio:1;margin:0 auto}
+.ringbox svg{width:100%;height:100%;display:block}
+.track{fill:none;stroke:var(--line);stroke-width:6}
+.prog{fill:none;stroke:var(--gold);stroke-width:6;stroke-linecap:round;transition:stroke-dashoffset .25s linear}
+.brk .prog{stroke:var(--sage)}
+.inner{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.clock{font-size:clamp(48px,14vw,68px);font-weight:200;font-variant-numeric:tabular-nums;line-height:1}
+.phase{margin-top:8px;color:var(--muted);font-size:15px}
+.actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:22px}
+.actions .btn{padding:11px 16px}
+.hint{text-align:center;margin-top:16px}
+
+/* Calendrier */
+.calhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:14px}
+.calhead h2{margin:0;font-size:18px;font-weight:600;flex:1;white-space:nowrap}
+@media(max-width:480px){.calhead h2{font-size:16px}.calhead .btn.sm{padding:6px 11px;font-size:13px}.nav{gap:4px}}
+.nav{display:flex;gap:6px;align-items:center}
+.round{width:36px;height:36px;border-radius:50%;border:1px solid var(--line);background:transparent;cursor:pointer;font-size:18px;line-height:1;padding:0}
+.round:hover{border-color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.dow{font-size:12px;color:var(--muted);text-align:center;padding:2px 0 4px}
+.cell{position:relative;aspect-ratio:1;border:1px solid var(--line);border-radius:10px;background:transparent;
+  padding:0;overflow:hidden;cursor:pointer;text-align:left;color:var(--text)}
+.cell:hover{border-color:var(--muted)}
+.cell .fill{position:absolute;left:0;right:0;bottom:0;height:0;background:var(--gold);opacity:.32}
+.cell .n{position:absolute;top:4px;left:7px;font-size:13px}
+.cell .t{position:absolute;bottom:3px;left:0;right:0;text-align:center;font-size:10.5px;font-variant-numeric:tabular-nums}
+.cell.met{color:var(--gold-ink);border-color:var(--gold)}
+.cell.met .fill{opacity:1}
+.cell.today{border-color:var(--text)}
+.cell.today .n{font-weight:700}
+.cell[aria-pressed="true"]{box-shadow:0 0 0 2px var(--text)}
+.cell .dot{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;
+  display:grid;place-items:center;font-size:11px;font-weight:700;line-height:1;color:#0D1220;
+  box-shadow:0 0 0 1.5px var(--bg)}
+.cell .dot[hidden]{display:none}
+@media(max-width:480px){
+  .cell .dot{width:16px;height:16px;font-size:10px;top:2px;right:2px}
+  .cell .n{left:5px;font-size:12px}
+}
+.legend{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.ramp{display:flex;align-items:center;gap:4px}
+.ramp i{display:block;width:10px;height:10px;border-radius:50%}
+.detail{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+.detail h3{margin:0 0 2px;font-size:16px;font-weight:600}
+.detail p{margin:0 0 12px}
+.detail .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.detail .score{margin:0 0 14px}
+.detail .score p{margin:0 0 8px}
+.scorerow{display:flex;gap:4px}
+.sc{flex:1;min-width:0;height:36px;border-radius:9px;border:1.5px solid var(--c);background:transparent;
+  color:var(--text);cursor:pointer;padding:0;font-size:14px}
+.sc:hover{background:color-mix(in srgb,var(--c) 25%,transparent)}
+.sc[aria-pressed="true"]{background:var(--c);color:#0D1220;font-weight:700}
+.sc:disabled{opacity:.35;cursor:default}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;align-items:end;margin:18px 0 0;padding-top:16px;border-top:1px solid var(--line)}
+.stats div{min-width:0}
+.stats dt{font-size:13px;color:var(--muted);margin:0 0 2px}
+.stats dd{margin:0;font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Focus</h1>
+    <button id="settingsBtn" class="link" type="button" aria-expanded="false" aria-controls="settings">Réglages</button>
+  </header>
+
+  <section id="settings" class="card" hidden aria-label="Réglages">
+    <div class="fields">
+      <label>Objectif du jour
+        <span class="pair"><input id="goalH" type="number" min="0" max="16" inputmode="numeric"> h <input id="goalM" type="number" min="0" max="59" inputmode="numeric"> min</span>
+      </label>
+      <label>Durée du travail
+        <span class="pair"><input id="fWork" type="number" min="1" max="180" inputmode="numeric"> min</span>
+      </label>
+      <label>Durée de la pause
+        <span class="pair"><input id="fShort" type="number" min="1" max="60" inputmode="numeric"> min</span>
+      </label>
+      <label>Durée de la pause longue
+        <span class="pair"><input id="fLong" type="number" min="1" max="120" inputmode="numeric"> min</span>
+      </label>
+    </div>
+    <div class="backup">
+      <button id="exportBtn" class="btn sm" type="button">Exporter mes données</button>
+      <button id="importBtn" class="btn sm" type="button">Importer une sauvegarde</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+      <p class="muted small">Tout est enregistré dans ce navigateur, sur ce fichier. Exporte de temps en temps pour ne rien perdre.</p>
+    </div>
+  </section>
+
+  <p id="msg" class="msg" role="status" hidden></p>
+
+  <main>
+    <div class="col">
+      <section id="today" class="card" aria-label="Objectif du jour">
+        <p id="remainLabel" class="lbl">Reste à travailler aujourd'hui</p>
+        <p id="remain" class="remain">3:00:00</p>
+        <div class="bar" aria-hidden="true"><i id="barFill"></i></div>
+        <p id="workedLine" class="worked muted small"></p>
+      </section>
+
+      <section id="timer" class="card" aria-label="Chronomètre">
+        <div class="tabs" role="group" aria-label="Type de séquence">
+          <button class="tab" type="button" data-phase="work" aria-pressed="true">Travail</button>
+          <button class="tab" type="button" data-phase="short" aria-pressed="false">Pause</button>
+          <button class="tab" type="button" data-phase="long" aria-pressed="false">Pause longue</button>
+        </div>
+        <div class="ringbox">
+          <svg viewBox="0 0 260 260" aria-hidden="true">
+            <circle class="track" cx="130" cy="130" r="116"></circle>
+            <circle id="prog" class="prog" cx="130" cy="130" r="116" transform="rotate(-90 130 130)"></circle>
+          </svg>
+          <div class="inner">
+            <div id="clock" class="clock" role="timer">25:00</div>
+            <div id="phaseLabel" class="phase">Travail</div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="startBtn" class="btn primary" type="button">Démarrer</button>
+          <button id="resetBtn" class="btn" type="button">Recommencer</button>
+          <button id="skipBtn" class="btn" type="button">Passer</button>
+        </div>
+        <p id="pomoLine" class="hint muted small"></p>
+      </section>
+    </div>
+
+    <section class="card" aria-label="Calendrier">
+      <div class="calhead">
+        <h2 id="monthTitle"></h2>
+        <div class="nav">
+          <button id="todayBtn" class="btn sm" type="button">Aujourd'hui</button>
+          <button id="prevBtn" class="round" type="button" aria-label="Mois précédent">&#8249;</button>
+          <button id="nextBtn" class="round" type="button" aria-label="Mois suivant">&#8250;</button>
+        </div>
+      </div>
+      <div class="grid" aria-hidden="true">
+        <div class="dow">L</div><div class="dow">M</div><div class="dow">M</div><div class="dow">J</div><div class="dow">V</div><div class="dow">S</div><div class="dow">D</div>
+      </div>
+      <div id="grid" class="grid" role="group" aria-label="Jours du mois"></div>
+      <div class="legend" aria-hidden="true"><span>Pastille : note de travail sur 10</span><span id="ramp" class="ramp"></span></div>
+
+      <div class="detail">
+        <h3 id="dayTitle"></h3>
+        <p id="dayLine" class="muted small"></p>
+        <div class="score">
+          <p class="muted small">Note de travail sur 10. Touche la même note pour l'effacer.</p>
+          <div id="scoreRow" class="scorerow" role="group" aria-label="Note de travail sur 10"></div>
+        </div>
+        <div class="row">
+          <button id="minus" class="btn sm" type="button">&minus;15 min</button>
+          <button id="plus" class="btn sm" type="button">+15 min</button>
+          <span class="muted small">Pour corriger un oubli.</span>
+        </div>
+      </div>
+
+      <dl class="stats">
+        <div><dt>Série en cours</dt><dd id="stStreak">0 jour</dd></div>
+        <div><dt>28 derniers jours</dt><dd id="st28">0 sur 28</dd></div>
+        <div><dt id="stMonthLbl">Temps ce mois</dt><dd id="stMonth">0 min</dd></div>
+        <div><dt id="stAvgLbl">Note moyenne ce mois</dt><dd id="stAvg">Aucune</dd></div>
+      </dl>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const KEY = "focus_v1";
+  const GAP = 3 * 60 * 1000;        // trou max toléré entre deux tops pendant que la page tourne
+  const LOAD_GAP = 2 * 60 * 1000;   // trou max toléré quand on rouvre la page
+  const C = 2 * Math.PI * 116;      // circonférence de l'anneau
+
+  const $ = id => document.getElementById(id);
+  const pad = n => String(n).padStart(2, "0");
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const fmtDay = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  const fmtMonth = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" });
+  const fmtMonthName = new Intl.DateTimeFormat("fr-FR", { month: "long" });
+
+  /* ---------- Données ---------- */
+  function defaults() {
+    return {
+      settings: { work: 25, short: 5, long: 15, goalMin: 180 },
+      days: {},
+      timer: { phase: "work", running: false, endTs: null, remainingMs: 25 * 60000, lastTick: null, doneWork: 0 }
+    };
+  }
+  const num = (v, min, max, def) => {
+    v = Number(v);
+    return Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : def;
+  };
+  function durOf(settings, phase) {
+    return (phase === "work" ? settings.work : phase === "short" ? settings.short : settings.long) * 60000;
+  }
+  function normalize(d) {
+    const base = defaults();
+    if (!d || typeof d !== "object") return base;
+    const s = d.settings || {};
+    base.settings = {
+      work: num(s.work, 1, 180, 25), short: num(s.short, 1, 60, 5),
+      long: num(s.long, 1, 120, 15), goalMin: num(s.goalMin, 1, 960, 180)
+    };
+    if (d.days && typeof d.days === "object") {
+      for (const k of Object.keys(d.days)) {
+        const v = d.days[k];
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !v || typeof v !== "object") continue;
+        const rec = {
+          ms: Math.max(0, Math.round(Number(v.ms)) || 0),
+          pomos: Math.max(0, Math.round(Number(v.pomos)) || 0),
+          goal: num(v.goal, 1, 960, base.settings.goalMin)
+        };
+        const sc = Math.round(Number(v.score));
+        if (sc >= 1 && sc <= 10) rec.score = sc;
+        base.days[k] = rec;
+      }
+    }
+    const t = d.timer || {};
+    const phase = ["work", "short", "long"].includes(t.phase) ? t.phase : "work";
+    const running = t.running === true && Number.isFinite(t.endTs) && Number.isFinite(t.lastTick);
+    base.timer = {
+      phase,
+      running,
+      endTs: running ? t.endTs : null,
+      lastTick: running ? t.lastTick : null,
+      remainingMs: num(t.remainingMs, 0, 10800000, durOf(base.settings, phase)),
+      doneWork: num(t.doneWork, 0, 100000, 0)
+    };
+    return base;
+  }
+
+  let storageOK = true;
+  function load() {
+    try {
+      const raw = localStorage.getItem(KEY);
+      if (raw) return normalize(JSON.parse(raw));
+    } catch (e) {}
+    return defaults();
+  }
+  let S = load();
+  let lastSave = 0;
+  function save(force) {
+    const n = Date.now();
+    if (!force && n - lastSave < 1000) return;
+    lastSave = n;
+    try { localStorage.setItem(KEY, JSON.stringify(S)); storageOK = true; }
+    catch (e) { storageOK = false; }
+  }
+
+  /* ---------- Dates ---------- */
+  function dayKey(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+  }
+  function keyToDate(k) { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); }
+  function nextMidnight(ts) { const d = new Date(ts); d.setHours(24, 0, 0, 0); return d.getTime(); }
+  const todayKey = () => dayKey(Date.now());
+
+  /* ---------- Formats ---------- */
+  const dur = phase => durOf(S.settings, phase);
+  function fmtClock(ms) { const s = Math.ceil(ms / 1000); return pad(Math.floor(s / 60)) + ":" + pad(s % 60); }
+  function fmtHMS(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    return Math.floor(s / 3600) + ":" + pad(Math.floor(s % 3600 / 60)) + ":" + pad(s % 60);
+  }
+  function fmtHM(ms) {            // 2 h 15, 3 h, 45 min
+    const m = Math.floor(ms / 60000), h = Math.floor(m / 60), mm = m % 60;
+    if (h === 0) return m + " min";
+    return mm === 0 ? h + " h" : h + " h " + pad(mm);
+  }
+  function fmtCompact(ms) {       // 2h15, 3h, 45 min
+    const m = Math.floor(ms / 60000), h = Math.floor(m / 60), mm = m % 60;
+    return h ? h + "h" + (mm ? pad(mm) : "") : m + " min";
+  }
+
+  /* ---------- Jours ---------- */
+  function getDay(k, create) {
+    let d = S.days[k];
+    if (!d && create) d = S.days[k] = { ms: 0, pomos: 0, goal: S.settings.goalMin };
+    return d;
+  }
+  function credit(from, to) {
+    while (from < to) {
+      const end = Math.min(to, nextMidnight(from));
+      getDay(dayKey(from), true).ms += end - from;
+      from = end;
+    }
+  }
+  const reached = k => { const d = S.days[k]; return !!d && d.ms >= d.goal * 60000; };
+  // Couleur de la note : 1 = rouge, 10 = vert
+  const scoreColor = n => "hsl(" + Math.round(2 + (n - 1) * 138 / 9) + " 72% 56%)";
+
+  /* ---------- Chrono ---------- */
+  let msg = "";
+  let audio = null;
+  function ensureAudio() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === "suspended") audio.resume();
+    } catch (e) {}
+  }
+  function beep() {
+    if (!audio) return;
+    try {
+      [0, 0.28, 0.56].forEach(dt => {
+        const t0 = audio.currentTime + dt, o = audio.createOscillator(), g = audio.createGain();
+        o.type = "sine"; o.frequency.value = 880;
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+        o.connect(g); g.connect(audio.destination);
+        o.start(t0); o.stop(t0 + 0.25);
+      });
+    } catch (e) {}
+  }
+
+  function nextPhase(from, counted) {
+    return from === "work" ? ((S.timer.doneWork + (counted ? 1 : 0)) % 4 === 0 ? "long" : "short") : "work";
+  }
+  function finishPhase(at, now) {
+    const t = S.timer, was = t.phase;
+    if (was === "work") {
+      getDay(dayKey(at), true).pomos += 1;
+      t.phase = nextPhase("work", true);
+      t.doneWork += 1;
+      msg = "Pomodoro terminé. " + (t.phase === "long" ? "Pause longue de " + S.settings.long : "Pause de " + S.settings.short) + " min.";
+    } else {
+      t.phase = "work";
+      msg = "Pause terminée. On reprend ?";
+    }
+    t.running = false; t.endTs = null; t.lastTick = null; t.remainingMs = dur(t.phase);
+    if (now - at < 5000) beep();
+  }
+  function fmtGap(ms) {
+    const m = Math.round(ms / 60000);
+    return m >= 60 ? Math.floor(m / 60) + " h " + pad(m % 60) : m + " min";
+  }
+  function tick(now, maxGap) {
+    now = now || Date.now();
+    const t = S.timer;
+    if (!t.running) return;
+    if (t.phase === "work" && now - t.lastTick > (maxGap || GAP)) {
+      msg = "Le chrono n'a pas tourné pendant " + fmtGap(now - t.lastTick) + " (veille de l'ordinateur ou page fermée). Ce temps n'est pas compté. Tu peux l'ajouter à la main dans le calendrier.";
+      t.running = false;
+      t.remainingMs = Math.max(0, t.endTs - t.lastTick);
+      t.endTs = null; t.lastTick = null;
+      save(true);
+      return;
+    }
+    if (t.phase === "work") {
+      const segEnd = Math.min(now, t.endTs);
+      if (segEnd > t.lastTick) credit(t.lastTick, segEnd);
+    }
+    if (now >= t.endTs) { finishPhase(t.endTs, now); save(true); }
+    else { t.lastTick = now; save(false); }
+  }
+
+  function start() {
+    const t = S.timer;
+    if (t.running) return;
+    ensureAudio();
+    const now = Date.now();
+    if (t.remainingMs <= 0) t.remainingMs = dur(t.phase);
+    t.running = true; t.endTs = now + t.remainingMs; t.lastTick = now;
+    msg = "";
+    save(true); renderAll();
+  }
+  function pause() {
+    const t = S.timer;
+    if (!t.running) return;
+    const now = Date.now();
+    tick(now);
+    if (t.running) {
+      t.remainingMs = Math.max(0, t.endTs - now);
+      t.running = false; t.endTs = null; t.lastTick = null;
+    }
+    save(true); renderAll();
+  }
+  function toggle() { S.timer.running ? pause() : start(); }
+  function stopAt(now) {            // fige le chrono (crédite d'abord le temps écoulé)
+    tick(now);
+    const t = S.timer;
+    t.running = false; t.endTs = null; t.lastTick = null;
+  }
+  function reset() {
+    stopAt(Date.now());
+    S.timer.remainingMs = dur(S.timer.phase);
+    msg = "";
+    save(true); renderAll();
+  }
+  function skip() {
+    stopAt(Date.now());
+    const t = S.timer;
+    t.phase = nextPhase(t.phase, false);
+    t.remainingMs = dur(t.phase);
+    msg = "";
+    save(true); renderAll();
+  }
+  function setPhase(p) {
+    if (S.timer.phase === p) return;
+    stopAt(Date.now());
+    S.timer.phase = p;
+    S.timer.remainingMs = dur(p);
+    msg = "";
+    save(true); renderAll();
+  }
+
+  /* ---------- Rendu ---------- */
+  const setText = (el, txt) => { if (el.textContent !== txt) el.textContent = txt; };
+  const LABELS = { work: "Travail", short: "Pause", long: "Pause longue" };
+  let view = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+  let selected = todayKey();
+  let cells = [], builtKey = "";
+
+  function buildCalendar() {
+    const grid = $("grid");
+    grid.textContent = "";
+    cells = [];
+    const y = view.getFullYear(), m = view.getMonth();
+    const off = (new Date(y, m, 1).getDay() + 6) % 7;
+    const n = new Date(y, m + 1, 0).getDate();
+    for (let i = 0; i < off; i++) grid.appendChild(document.createElement("div"));
+    for (let d = 1; d <= n; d++) {
+      const k = y + "-" + pad(m + 1) + "-" + pad(d);
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "cell"; b.dataset.k = k;
+      b.innerHTML = '<span class="fill"></span><span class="n">' + d + '</span><span class="dot" hidden></span><span class="t"></span>';
+      b.addEventListener("click", () => { selected = k; updateCalendar(); renderDetail(); });
+      grid.appendChild(b);
+      cells.push(b);
+    }
+    builtKey = y + "-" + m;
+    setText($("monthTitle"), cap(fmtMonth.format(view)));
+  }
+
+  function updateCalendar() {
+    if (builtKey !== view.getFullYear() + "-" + view.getMonth()) buildCalendar();
+    const today = todayKey();
+    let monthMs = 0, scoreSum = 0, scoreN = 0;
+    for (const b of cells) {
+      const k = b.dataset.k, d = S.days[k];
+      const ms = d ? d.ms : 0;
+      const goal = (k === today || !d ? S.settings.goalMin : d.goal) * 60000;
+      const met = !!d && ms >= goal;
+      monthMs += ms;
+      const score = d && d.score ? d.score : 0;
+      const dot = b.querySelector(".dot");
+      if (score) {
+        scoreSum += score; scoreN++;
+        dot.hidden = false; setText(dot, String(score)); dot.style.background = scoreColor(score);
+      } else dot.hidden = true;
+      b.classList.toggle("met", met);
+      b.classList.toggle("today", k === today);
+      b.setAttribute("aria-pressed", k === selected ? "true" : "false");
+      b.querySelector(".fill").style.height = (met ? 100 : Math.min(1, ms / goal) * 100) + "%";
+      setText(b.querySelector(".t"), ms >= 60000 ? fmtCompact(ms) : "");
+      const label = cap(fmtDay.format(keyToDate(k))) + " : " + fmtHM(ms) + " sur " + fmtHM(goal) + (met ? ", objectif atteint" : "") + (score ? ", note " + score + " sur 10" : "");
+      if (b.getAttribute("aria-label") !== label) b.setAttribute("aria-label", label);
+    }
+    // Stats
+    let streak = 0;
+    const cur = new Date(); cur.setHours(0, 0, 0, 0);
+    if (!reached(dayKey(cur.getTime()))) cur.setDate(cur.getDate() - 1);
+    while (reached(dayKey(cur.getTime())) && streak < 4000) { streak++; cur.setDate(cur.getDate() - 1); }
+    let last28 = 0;
+    const c2 = new Date(); c2.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 28; i++) { if (reached(dayKey(c2.getTime()))) last28++; c2.setDate(c2.getDate() - 1); }
+    setText($("stStreak"), streak + (streak > 1 ? " jours" : " jour"));
+    setText($("st28"), last28 + " sur 28");
+    const mn = fmtMonthName.format(view);
+    setText($("stMonthLbl"), "Temps en " + mn);
+    setText($("stMonth"), fmtHM(monthMs));
+    setText($("stAvgLbl"), "Note moyenne en " + mn);
+    setText($("stAvg"), scoreN ? (scoreSum / scoreN).toFixed(1).replace(".", ",") + " / 10" : "Aucune");
+  }
+
+  function renderDetail() {
+    const k = selected, d = S.days[k], today = todayKey();
+    const future = k > today;
+    setText($("dayTitle"), cap(fmtDay.format(keyToDate(k))));
+    const ms = d ? d.ms : 0;
+    const goal = (k === today || !d ? S.settings.goalMin : d.goal) * 60000;
+    let line;
+    if (future) line = "Jour à venir.";
+    else {
+      line = fmtHM(ms) + " sur " + fmtHM(goal);
+      if (d && d.pomos) line += ", " + d.pomos + " pomodoro" + (d.pomos > 1 ? "s" : "");
+      if (ms >= goal && d) line += ". Objectif atteint";
+    }
+    setText($("dayLine"), line);
+    const sc = d && d.score ? d.score : 0;
+    document.querySelectorAll(".sc").forEach(b => {
+      b.setAttribute("aria-pressed", Number(b.dataset.n) === sc ? "true" : "false");
+      b.disabled = future;
+    });
+    $("plus").disabled = future;
+    $("minus").disabled = future || ms < 60000;
+  }
+
+  function renderLive() {
+    const t = S.timer, now = Date.now();
+    const rem = t.running ? Math.max(0, t.endTs - now) : t.remainingMs;
+    const total = dur(t.phase);
+    setText($("clock"), fmtClock(rem));
+    const frac = total ? Math.min(1, Math.max(0, 1 - rem / total)) : 0;
+    $("prog").style.strokeDasharray = C.toFixed(2);
+    $("prog").style.strokeDashoffset = (C * (1 - frac)).toFixed(2);
+    document.body.classList.toggle("brk", t.phase !== "work");
+
+    const partial = !t.running && t.remainingMs < total;
+    setText($("phaseLabel"), LABELS[t.phase] + (partial ? ", en pause" : ""));
+    setText($("startBtn"), t.running ? "Mettre en pause" : partial ? "Reprendre" : "Démarrer");
+    document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-pressed", b.dataset.phase === t.phase ? "true" : "false"));
+
+    // Objectif du jour
+    const d = S.days[todayKey()];
+    const worked = d ? d.ms : 0, goalMs = S.settings.goalMin * 60000;
+    const isDone = worked >= goalMs;
+    $("today").classList.toggle("done", isDone);
+    if (isDone) {
+      setText($("remainLabel"), "Objectif atteint, bonus du jour");
+      setText($("remain"), "+" + fmtHMS(worked - goalMs));
+    } else {
+      setText($("remainLabel"), "Reste à travailler aujourd'hui");
+      setText($("remain"), fmtHMS(goalMs - worked));
+    }
+    $("barFill").style.width = Math.min(100, worked / goalMs * 100).toFixed(2) + "%";
+    setText($("workedLine"), fmtHM(worked) + " travaillées sur " + fmtHM(goalMs));
+    const p = d ? d.pomos : 0;
+    setText($("pomoLine"), (p ? p + " pomodoro" + (p > 1 ? "s" : "") + " terminé" + (p > 1 ? "s" : "") + " aujourd'hui. " : "") + "Espace pour démarrer ou mettre en pause.");
+
+    // Titre de l'onglet
+    document.title = t.running ? fmtClock(rem) + " - " + LABELS[t.phase] : "Focus";
+
+    // Message
+    const m = (!storageOK ? "Impossible d'enregistrer dans ce navigateur : tes données ne seront pas conservées. " : "") + msg;
+    const box = $("msg");
+    if (m) { setText(box, m); box.hidden = false; } else { box.hidden = true; }
+
+    updateCalendar();
+    if (selected === todayKey()) renderDetail();
+  }
+  function renderAll() { renderLive(); renderDetail(); }
+
+  /* ---------- Actions ---------- */
+  function adjust(delta) {
+    const k = selected;
+    if (k > todayKey()) return;
+    if (S.timer.running) tick(Date.now());
+    const d = getDay(k, true);
+    d.ms = Math.max(0, d.ms + delta * 60000);
+    save(true); renderAll();
+  }
+
+  function setScore(k, n) {
+    if (k > todayKey()) return;
+    const d = getDay(k, true);
+    if (d.score === n) delete d.score; else d.score = n;
+    save(true); renderAll();
+  }
+
+  function readSettings() {
+    const old = S.settings, t = S.timer;
+    const wasFull = !t.running && t.remainingMs === dur(t.phase);
+    const h = num($("goalH").value, 0, 16, Math.floor(old.goalMin / 60));
+    const m = num($("goalM").value, 0, 59, old.goalMin % 60);
+    S.settings = {
+      work: num($("fWork").value, 1, 180, old.work),
+      short: num($("fShort").value, 1, 60, old.short),
+      long: num($("fLong").value, 1, 120, old.long),
+      goalMin: Math.max(1, h * 60 + m)
+    };
+    if (wasFull) t.remainingMs = dur(t.phase);
+    if (t.running) {                          // ne change pas la séquence en cours
+      const total = durOf(old, t.phase);
+      if (t.endTs - Date.now() > total) t.endTs = Date.now() + total;
+    }
+    const d = S.days[todayKey()];
+    if (d) d.goal = S.settings.goalMin;
+    fillSettings();
+    save(true); renderAll();
+  }
+  function fillSettings() {
+    const vals = {
+      goalH: Math.floor(S.settings.goalMin / 60), goalM: S.settings.goalMin % 60,
+      fWork: S.settings.work, fShort: S.settings.short, fLong: S.settings.long
+    };
+    for (const id of Object.keys(vals)) {
+      const el = $(id), v = String(vals[id]);
+      if (el.value !== v) el.value = v;   // ne touche pas un champ déjà à jour (curseur, sélection)
+    }
+  }
+
+  function exportData() {
+    const data = { app: "focus", version: 1, exported: new Date().toISOString(), settings: S.settings, days: S.days };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "focus-sauvegarde-" + todayKey() + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+  function importData(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (!parsed || typeof parsed.days !== "object") throw new Error("format");
+        const n = normalize({ settings: parsed.settings, days: parsed.days });
+        const count = Object.keys(n.days).length;
+        if (!confirm("Remplacer tes données actuelles par cette sauvegarde (" + count + " jour" + (count > 1 ? "s" : "") + ") ?")) return;
+        stopAt(Date.now());
+        S.settings = n.settings; S.days = n.days;
+        S.timer.remainingMs = dur(S.timer.phase);
+        msg = "Sauvegarde importée.";
+        fillSettings(); save(true); buildCalendar(); renderAll();
+      } catch (e) {
+        msg = "Ce fichier n'est pas une sauvegarde Focus valide.";
+        renderAll();
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  /* ---------- Branchements ---------- */
+  $("startBtn").addEventListener("click", toggle);
+  $("resetBtn").addEventListener("click", reset);
+  $("skipBtn").addEventListener("click", skip);
+  document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => setPhase(b.dataset.phase)));
+  $("prevBtn").addEventListener("click", () => { view = new Date(view.getFullYear(), view.getMonth() - 1, 1); updateCalendar(); });
+  $("nextBtn").addEventListener("click", () => { view = new Date(view.getFullYear(), view.getMonth() + 1, 1); updateCalendar(); });
+  $("todayBtn").addEventListener("click", () => {
+    const d = new Date(); view = new Date(d.getFullYear(), d.getMonth(), 1); selected = todayKey(); updateCalendar(); renderDetail();
+  });
+  $("plus").addEventListener("click", () => adjust(15));
+  $("minus").addEventListener("click", () => adjust(-15));
+  $("settingsBtn").addEventListener("click", () => {
+    const box = $("settings"), open = box.hidden;
+    box.hidden = !open;
+    $("settingsBtn").setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  ["goalH", "goalM", "fWork", "fShort", "fLong"].forEach(id => $(id).addEventListener("change", readSettings));
+  $("exportBtn").addEventListener("click", exportData);
+  $("importBtn").addEventListener("click", () => $("importFile").click());
+  $("importFile").addEventListener("change", e => { const f = e.target.files[0]; if (f) importData(f); e.target.value = ""; });
+  document.addEventListener("keydown", e => {
+    if (e.code !== "Space" || e.repeat) return;
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "button" || tag === "select" || tag === "textarea") return;
+    e.preventDefault(); toggle();
+  });
+  document.addEventListener("visibilitychange", () => { tick(); renderAll(); });
+  window.addEventListener("pagehide", () => { tick(); save(true); });
+
+  /* ---------- Démarrage ---------- */
+  for (let n = 1; n <= 10; n++) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "sc"; b.dataset.n = n; b.textContent = n;
+    b.setAttribute("aria-label", "Note " + n + " sur 10");
+    b.style.setProperty("--c", scoreColor(n));
+    b.addEventListener("click", () => setScore(selected, n));
+    $("scoreRow").appendChild(b);
+  }
+  {
+    const ramp = $("ramp");
+    const lo = document.createElement("span"); lo.textContent = "1"; ramp.appendChild(lo);
+    for (let n = 1; n <= 10; n++) { const i = document.createElement("i"); i.style.background = scoreColor(n); ramp.appendChild(i); }
+    const hi = document.createElement("span"); hi.textContent = "10"; ramp.appendChild(hi);
+  }
+  fillSettings();
+  tick(Date.now(), LOAD_GAP);
+  save(true);
+  buildCalendar();
+  renderAll();
+  setInterval(() => { tick(); renderLive(); }, 250);
+})();
+</script>
+</body>
+</html>
