@@ -386,19 +386,48 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
       if (audio.state === "suspended") audio.resume();
     } catch (e) {}
   }
-  function beep() {
+  /* Sonnerie : 8 motifs de 3 notes (12 s), programmée sur l'horloge audio à l'heure
+     exacte de fin. Elle sonne même si l'onglet est en arrière-plan (les minuteurs
+     de la page peuvent y être ralentis, pas l'horloge audio). */
+  const RING_SECONDS = 12;
+  let ringNodes = [], ringStart = null, doneFlash = false;
+  function ringNote(t0, freq, dur) {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.type = "triangle"; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.45, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(audio.destination);
+    o.start(t0); o.stop(t0 + dur + 0.03);
+    ringNodes.push(o);
+  }
+  function cancelRing() {
+    ringNodes.forEach(o => { try { o.stop(); } catch (e) {} try { o.disconnect(); } catch (e) {} });
+    ringNodes = []; ringStart = null;
+  }
+  function scheduleRing(delaySec) {
+    cancelRing();
     if (!audio) return;
     try {
-      [0, 0.28, 0.56].forEach(dt => {
-        const t0 = audio.currentTime + dt, o = audio.createOscillator(), g = audio.createGain();
-        o.type = "sine"; o.frequency.value = 880;
-        g.gain.setValueAtTime(0.0001, t0);
-        g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
-        o.connect(g); g.connect(audio.destination);
-        o.start(t0); o.stop(t0 + 0.25);
-      });
-    } catch (e) {}
+      const base = audio.currentTime + Math.max(0, delaySec);
+      ringStart = base;
+      for (let k = 0; k < RING_SECONDS / 1.5; k++) {
+        const t0 = base + k * 1.5;
+        ringNote(t0, 784, 0.18);
+        ringNote(t0 + 0.25, 988, 0.18);
+        ringNote(t0 + 0.5, 1175, 0.32);
+      }
+    } catch (e) { ringNodes = []; ringStart = null; }
+  }
+  function armRing() {                    // à appeler dès que le chrono tourne
+    const t = S.timer;
+    if (!t.running || !t.endTs) return;
+    ensureAudio();
+    scheduleRing((t.endTs - Date.now()) / 1000);
+  }
+  function isRinging() {
+    return !!audio && ringStart !== null && audio.state === "running" &&
+      audio.currentTime >= ringStart && audio.currentTime < ringStart + RING_SECONDS;
   }
 
   function nextPhase(from, counted) {
@@ -416,7 +445,11 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
       msg = "Pause terminée. On reprend ?";
     }
     t.running = false; t.endTs = null; t.lastTick = null; t.remainingMs = dur(t.phase);
-    if (now - at < 5000) beep();
+    // Filet de sécurité : si la sonnerie programmée n'a pas démarré (page rechargée,
+    // audio suspendu), on la joue maintenant, sauf si la fin date de plus d'une minute.
+    const rang = ringStart !== null && !!audio && audio.state === "running" && audio.currentTime >= ringStart - 0.05;
+    if (now - at < 60000 && !rang) { ensureAudio(); scheduleRing(0); }
+    doneFlash = document.hidden;
   }
   function fmtGap(ms) {
     const m = Math.round(ms / 60000);
@@ -428,6 +461,7 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     if (!t.running) return;
     if (t.phase === "work" && now - t.lastTick > (maxGap || GAP)) {
       msg = "Le chrono n'a pas tourné pendant " + fmtGap(now - t.lastTick) + " (veille de l'ordinateur ou page fermée). Ce temps n'est pas compté. Tu peux l'ajouter à la main dans le calendrier.";
+      cancelRing();
       t.running = false;
       t.remainingMs = Math.max(0, t.endTs - t.lastTick);
       t.endTs = null; t.lastTick = null;
@@ -449,7 +483,8 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     const now = Date.now();
     if (t.remainingMs <= 0) t.remainingMs = dur(t.phase);
     t.running = true; t.endTs = now + t.remainingMs; t.lastTick = now;
-    msg = "";
+    msg = ""; doneFlash = false;
+    armRing();
     save(true); renderAll();
   }
   function pause() {
@@ -458,6 +493,7 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     const now = Date.now();
     tick(now);
     if (t.running) {
+      cancelRing();
       t.remainingMs = Math.max(0, t.endTs - now);
       t.running = false; t.endTs = null; t.lastTick = null;
     }
@@ -466,6 +502,7 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
   function toggle() { S.timer.running ? pause() : start(); }
   function stopAt(now) {            // fige le chrono (crédite d'abord le temps écoulé)
     tick(now);
+    cancelRing();
     const t = S.timer;
     t.running = false; t.endTs = null; t.lastTick = null;
   }
@@ -617,7 +654,7 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     setText($("pomoLine"), (p ? p + " pomodoro" + (p > 1 ? "s" : "") + " terminé" + (p > 1 ? "s" : "") + " aujourd'hui. " : "") + "Espace pour démarrer ou mettre en pause.");
 
     // Titre de l'onglet
-    document.title = t.running ? fmtClock(rem) + " - " + LABELS[t.phase] : "Focus";
+    document.title = t.running ? fmtClock(rem) + " - " + LABELS[t.phase] : (doneFlash ? "Terminé - Focus" : "Focus");
 
     // Message
     const m = (!storageOK ? "Impossible d'enregistrer dans ce navigateur : tes données ne seront pas conservées. " : "") + msg;
@@ -661,6 +698,7 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     if (t.running) {                          // ne change pas la séquence en cours
       const total = durOf(old, t.phase);
       if (t.endTs - Date.now() > total) t.endTs = Date.now() + total;
+      armRing();
     }
     const d = S.days[todayKey()];
     if (d) d.goal = S.settings.goalMin;
@@ -736,7 +774,15 @@ main{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
     if (tag === "input" || tag === "button" || tag === "select" || tag === "textarea") return;
     e.preventDefault(); toggle();
   });
-  document.addEventListener("visibilitychange", () => { tick(); renderAll(); });
+  document.addEventListener("visibilitychange", () => { tick(); if (!document.hidden) doneFlash = false; renderAll(); });
+  function onUserAction() {               // un geste débloque l'audio et coupe la sonnerie
+    ensureAudio();
+    if (isRinging()) cancelRing();
+    else if (S.timer.running && ringStart === null) armRing();
+    if (doneFlash) { doneFlash = false; renderLive(); }
+  }
+  document.addEventListener("pointerdown", onUserAction, true);
+  document.addEventListener("keydown", onUserAction, true);
   window.addEventListener("pagehide", () => { tick(); save(true); });
 
   /* ---------- Démarrage ---------- */
