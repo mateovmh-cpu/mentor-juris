@@ -1212,7 +1212,41 @@ const clean = (s, n = 60) => String(s || "").replace(/\s+/g, " ").trim().slice(0
 
 /* ---- Cours par matière ---- */
 const COURS_CAP = 250000;
+const COURS_MAX_PARTS = 6;
 const getCours = () => store.get("mj_cours", {});
+const fmtN = (n) => n.toLocaleString("fr-FR");
+// Coupe un texte trop long en parties de COURS_CAP caractères max, de préférence entre deux paragraphes.
+function splitCours(text) {
+  const parts = [];
+  let rest = text;
+  while (rest.length > COURS_CAP && parts.length < COURS_MAX_PARTS - 1) {
+    const win = rest.slice(0, COURS_CAP), min = Math.floor(COURS_CAP * 0.85);
+    let cut = win.lastIndexOf("\n\n");
+    if (cut < min) cut = win.lastIndexOf("\n");
+    if (cut < min) cut = win.lastIndexOf(". ") + 1;
+    if (cut < min) cut = COURS_CAP;
+    parts.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  const dropped = Math.max(0, rest.length - COURS_CAP);
+  parts.push(rest.slice(0, COURS_CAP).trim());
+  return { parts, dropped };
+}
+// Range le texte dans la matière m et, si besoin, dans « m (partie 2) », « (partie 3) »… sans écraser de notes existantes.
+function placeCours(cours, m, text) {
+  const { parts, dropped } = splitCours(text);
+  const mm = m.match(/^(.*) \(partie (\d+)\)$/), base = mm ? mm[1] : m;
+  let num = mm ? Number(mm[2]) : 1;
+  const next = { ...cours }, names = [m];
+  next[m] = { ...(next[m] || {}), notes: parts[0], digest: undefined };
+  for (const part of parts.slice(1)) {
+    let name;
+    do { num++; name = `${base} (partie ${num})`; } while (next[name] && (next[name].notes || "").trim());
+    next[name] = { ...(next[name] || {}), notes: part, digest: undefined };
+    names.push(name);
+  }
+  return { cours: next, names, dropped };
+}
 function saveCours(obj) {
   try { localStorage.setItem("mj_cours", JSON.stringify(obj)); sync.mark("mj_cours"); return true; } catch { return false; }
 }
@@ -1429,8 +1463,8 @@ function Onboarding({ onDone }) {
       fd.append("email", email.trim()); fd.append("niveau", niveau); fd.append("source", "app"); fd.append("consentement", "oui");
       fetch(MJ_FORM, { method: "POST", headers: { Accept: "application/json" }, body: fd }).catch(() => {});
     }
-    const cours = getCours();
-    for (const m of matieres) if ((notes[m] || "").trim()) cours[m] = { ...(cours[m] || {}), notes: notes[m], digest: undefined };
+    let cours = getCours();
+    for (const m of matieres) if ((notes[m] || "").trim()) cours = placeCours(cours, m, notes[m]).cours;
     saveCours(cours);
     store.set("mj_items", items);
     store.set("mj_mentor", mentor);
@@ -1525,9 +1559,9 @@ function Onboarding({ onDone }) {
         ${step === 3 && html`<div class="flex flex-col gap-4">
           ${matieres.map((m) => html`<div key=${m} class="flex flex-col gap-1.5">
             <label class="eyebrow" htmlFor=${"ob-n-" + m}>${m}</label>
-            <textarea id=${"ob-n-" + m} rows="4" value=${notes[m] || ""} onInput=${(e) => setNotes((n) => ({ ...n, [m]: e.target.value.slice(0, COURS_CAP) }))}
+            <textarea id=${"ob-n-" + m} rows="4" value=${notes[m] || ""} onInput=${(e) => setNotes((n) => ({ ...n, [m]: e.target.value.slice(0, COURS_CAP * COURS_MAX_PARTS) }))}
               placeholder="Colle ici ton plan de cours ou tes notes (facultatif)" class=${OINPUT + " font-mono resize-y leading-relaxed"}></textarea>
-            ${(notes[m] || "").length > 0 && html`<span class="mono text-[11px] text-dim">${(notes[m] || "").length} caractères</span>`}
+            ${(notes[m] || "").length > 0 && html`<span class="mono text-[11px] text-dim">${fmtN((notes[m] || "").length)} caractères${(notes[m] || "").length > COURS_CAP ? ` · cours long : il sera réparti automatiquement en ${splitCours(notes[m]).parts.length} parties` : ""}</span>`}
           </div>`)}
           <p class="text-xs text-dim">Tu pourras en ajouter à tout moment dans l'onglet « Mes cours », où le mentor les analyse.</p>
         </div>`}
@@ -1588,9 +1622,15 @@ function MesCours({ setItems, setPage }) {
     refreshContext();
     return true;
   };
+  const [info, setInfo] = useState(null);
+  const infoRef = useRef(null);
+  useEffect(() => { if (info && infoRef.current) infoRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [info]);
   const setNotesFor = (m, text) => {
-    const over = text.length - COURS_CAP;
-    if (update(m, { notes: text.slice(0, COURS_CAP) }) && over > 0) setMsg(`Ton cours est très long : seuls les ${COURS_CAP.toLocaleString("fr-FR")} premiers caractères sont gardés (${over.toLocaleString("fr-FR")} ignorés). Pour la suite, crée une matière du type « ${m} (suite) ».`);
+    if (text.length <= COURS_CAP) { update(m, { notes: text }); return; }
+    const { cours: next, names, dropped } = placeCours(getCours(), m, text);
+    if (!saveCours(next)) { setMsg("Le stockage du navigateur est plein : supprime d'anciennes notes ou raccourcis ce cours."); return; }
+    setMsg(""); setCours(next); refreshContext();
+    setInfo({ total: text.length, names, dropped });
   };
   const importFiles = async (m, files) => {
     const list = Array.from(files || []);
@@ -1630,8 +1670,17 @@ function MesCours({ setItems, setPage }) {
   };
 
   return html`<div class="flex flex-col gap-4 max-w-3xl">
-    <${PageHead} title="Mes cours" sub="Dépose ou colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes restent dans ton navigateur et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
+    <${PageHead} title="Mes cours" sub="Dépose ou colle tes notes matière par matière. Le mentor les analyse pour te proposer des séances précises plutôt que génériques. Tes notes sont enregistrées sur ton compte et ne sont envoyées à l'IA que pendant l'analyse et les générations." />
     ${msg && html`<div role="alert" class="rounded-xl p-3 border text-xs" style=${{ borderColor: "rgba(255,59,78,.3)", background: "var(--red-soft)", color: "var(--red)" }}>${msg}</div>`}
+    ${info && html`<div id="cours-split-info" ref=${infoRef} role="status" class="rounded-2xl p-4 flex flex-col gap-2" style=${{ border: "2px solid var(--brass)", background: "rgba(210,173,99,.08)" }}>
+      <div class="flex items-start justify-between gap-3">
+        <strong class="display text-lg leading-snug">✂️ Ton cours était long, on l'a découpé pour toi</strong>
+        <button type="button" onClick=${() => setInfo(null)} aria-label="Fermer" class="text-muted hover:text-txt text-lg leading-none">×</button>
+      </div>
+      <p class="text-sm">${fmtN(info.total)} caractères, c'est plus qu'une matière ne peut contenir (${fmtN(COURS_CAP)}). Plutôt que d'en perdre une partie, ton cours a été réparti automatiquement en <strong>${info.names.length} parties</strong> :</p>
+      <ul class="text-sm flex flex-col gap-1">${info.names.map((n) => html`<li key=${n} class="flex items-center gap-2"><span class="sq" style=${{ background: "var(--brass)" }}></span>${n}</li>`)}</ul>
+      <p class="text-sm">${info.dropped > 0 ? html`Attention : la fin du cours (${fmtN(info.dropped)} caractères) dépasse ${COURS_MAX_PARTS} parties et n'a pas été gardée.` : "Rien n'a été perdu."} Prochaine étape : clique sur <strong>« Analyser mes notes »</strong> dans chaque partie pour que le mentor la prenne en compte.</p>
+    </div>`}
     ${matieres.length === 0 && html`<p class="text-sm text-muted">Aucune matière pour l'instant. Ajoute-en une ci-dessous.</p>`}
     ${matieres.map((m) => {
       const c = cours[m] || { notes: "" };
