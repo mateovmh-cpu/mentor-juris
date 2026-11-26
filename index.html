@@ -246,6 +246,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const TYPES = {
   partiel:  { label: "Partiel",  deadline: true },
   td:       { label: "Rendu TD",  deadline: true },
+  controle: { label: "Contrôle",  deadline: true },
   revision: { label: "Révision",  deadline: false },
   tache:    { label: "Tâche",    deadline: false },
 };
@@ -357,10 +358,13 @@ const errorText = (e) => e?.code === "no_sample" ? NO_SAMPLE : (ERRORS[e?.code] 
 const plural = (n, w) => `${n} ${w}${n > 1 ? "s" : ""}`;
 function mentorOrder(items, tone = "strict") {
   const pending = items.filter((i) => !i.done && !isDeadline(i));
-  const overdue = pending.filter((i) => i.date < TODAY).sort((a, b) => a.date.localeCompare(b.date));
+  const fz0 = (store.get("mj_profile", null) || {}).focus, fM = fz0 && fz0.until >= TODAY ? fz0.matiere : null;
+  const overdue = pending.filter((i) => i.date < TODAY && (!fM || i.matiere === fM)).sort((a, b) => a.date.localeCompare(b.date));
   const deadlines = items.filter((i) => isDeadline(i) && i.date >= TODAY).sort((a, b) => a.date.localeCompare(b.date));
   const next = deadlines[0];
   const todayTasks = pending.filter((i) => i.date === TODAY);
+  const fz = (store.get("mj_profile", null) || {}).focus;
+  const focusM = fz && fz.until >= TODAY ? fz.matiere : null;
   const nextIn = next ? diffDays(TODAY, next.date) : null;
   const strict = tone === "strict";
 
@@ -373,7 +377,7 @@ function mentorOrder(items, tone = "strict") {
         : `Prévue il y a ${plural(late, "jour")}. La rattraper maintenant allège le reste de la semaine.` };
   }
   if (todayTasks.length) {
-    const t = todayTasks.find((i) => next && i.matiere === next.matiere) || todayTasks[0];
+    const t = (focusM && todayTasks.find((i) => i.matiere === focusM)) || todayTasks.find((i) => next && i.matiere === next.matiere) || todayTasks[0];
     const rest = todayTasks.length - 1;
     return { task: t,
       order: strict ? `Aujourd'hui : « ${t.title} ». Rien d'autre tant que ce n'est pas fait.` : `Priorité du jour : « ${t.title} ».`,
@@ -628,6 +632,110 @@ function DayRail({ items, selected, onToggle, onAdd, onRemove }) {
   </aside>`;
 }
 
+
+const FR_DAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const fmtDay = (iso) => { const d = fromIso(iso); return `${FR_DAYS[d.getDay()]} ${d.getDate()}/${String(d.getMonth() + 1).padStart(2, "0")}`; };
+function PriorityBox({ items, setItems, sample }) {
+  const prof = store.get("mj_profile", null) || { matieres: [] };
+  const mats = prof.matieres || [];
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [matiere, setMatiere] = useState("");
+  const [date, setDate] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(null);
+  const focus = prof.focus && prof.focus.until >= TODAY ? prof.focus : null;
+
+  const submit = async () => {
+    setErr("");
+    if (!text.trim() && !matiere) return setErr("Dis au mentor par quoi tu veux commencer, ou choisis une matière.");
+    setBusy(true);
+    const before = items;
+    try {
+      const pending = items.filter((i) => !i.done && i.date >= TODAY).map((i) => `${i.id} | ${i.date} | ${TYPES[i.type]?.label || i.type} | ${i.matiere || "—"} | ${i.title}`).join("\n") || "aucune";
+      const data = await askJson(sample, `${MENTOR}
+Aujourd'hui : ${fmtDay(TODAY)} (${TODAY}). L'étudiant te dit par quoi il veut commencer ses révisions. Réorganise son planning en conséquence.
+DEMANDE DE L'ÉTUDIANT : « ${clean(text, 400) || "commencer par " + matiere} »${matiere ? `\nMATIÈRE CHOISIE : ${matiere}` : ""}${date ? `\nDATE DE L'ÉCHÉANCE INDIQUÉE : ${date}` : ""}
+MATIÈRES DE L'ÉTUDIANT : ${mats.join(", ") || "non précisées"}
+TÂCHES À VENIR (id | date | type | matière | titre) :
+${pending}
+Règles :
+- "matiere" : la matière prioritaire, écrite exactement comme dans la liste de l'étudiant si elle y figure.
+- "echeance" : si la demande mentionne une évaluation (contrôle, partiel, TD à rendre, oral…) qui n'est pas déjà dans les tâches, crée-la avec sa date (déduis-la de « la semaine prochaine », etc. ; en cas de doute, le même jour de la semaine suivante) ; sinon null. "type" vaut "controle", "partiel" ou "td".
+- "seances" : 3 à 8 séances précises et actionnables sur la matière prioritaire (titre de 60 caractères max), réparties entre aujourd'hui et la veille de l'échéance (ou sur 7 jours sans échéance), au plus 2 par jour, avec une séance d'entraînement chronométrée juste avant l'échéance. Appuie-toi sur le contenu des cours de l'étudiant s'il est connu.
+- "decaler" : les tâches non urgentes d'autres matières qui tombent avant l'échéance et la gêneraient, avec une nouvelle date juste après l'échéance. Ne décale jamais une échéance (partiel, TD, contrôle).
+- "message" : une à deux phrases du mentor, à l'étudiant, qui résument le nouveau plan.
+Réponds uniquement en JSON : {"matiere":"string","echeance":{"date":"YYYY-MM-DD","titre":"string","type":"controle"}|null,"seances":[{"date":"YYYY-MM-DD","titre":"string"}],"decaler":[{"id":"string","date":"YYYY-MM-DD"}],"message":"string"}`);
+      const max = isoIn(90), okDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(d || "") && d >= TODAY && d <= max;
+      const m = clean(data && data.matiere, 50) || matiere || mats[0] || "";
+      const ech = data && data.echeance && okDate(data.echeance.date) ? { id: uid(), date: date && okDate(date) ? date : data.echeance.date, title: clean(data.echeance.titre, 70) || `Contrôle — ${m}`, type: ["controle", "partiel", "td"].includes(data.echeance.type) ? data.echeance.type : "controle", matiere: m, done: false } : null;
+      const seances = (Array.isArray(data && data.seances) ? data.seances : []).filter((x) => okDate(x.date) && clean(x.titre)).slice(0, 8)
+        .map((x) => ({ id: uid(), date: x.date, title: clean(x.titre, 60), type: "revision", matiere: m, done: false, focus: true }));
+      const ids = new Set(items.filter((i) => !i.done && !isDeadline(i)).map((i) => i.id));
+      const moves = new Map((Array.isArray(data && data.decaler) ? data.decaler : []).filter((x) => ids.has(x.id) && okDate(x.date)).map((x) => [x.id, x.date]));
+      if (!seances.length && !ech) throw { code: "failed" };
+      setItems((xs) => [...xs.map((i) => moves.has(i.id) ? { ...i, date: moves.get(i.id) } : i), ...(ech ? [ech] : []), ...seances]);
+      const until = ech ? ech.date : (seances.map((x) => x.date).sort().pop() || isoIn(7));
+      const p = store.get("mj_profile", null);
+      if (p) store.set("mj_profile", { ...p, focus: { matiere: m, until, text: clean(text, 200) } });
+      setDone({ before, prevFocus: prof.focus || null, matiere: m, ech, n: seances.length, moved: moves.size, message: clean(data && data.message, 300) });
+      setText(""); setDate(""); setMatiere(""); setOpen(false);
+    } catch (e) {
+      setErr(e && e.code ? errorText(e) : "Le mentor n'a pas réussi à réorganiser ton planning. Reformule ta demande ou réessaie.");
+    } finally { setBusy(false); }
+  };
+  const undo = () => {
+    if (!done) return;
+    setItems(done.before);
+    const p = store.get("mj_profile", null);
+    if (p) store.set("mj_profile", { ...p, focus: done.prevFocus || undefined });
+    setDone(null);
+  };
+  const stopFocus = () => { const p = store.get("mj_profile", null); if (p) store.set("mj_profile", { ...p, focus: undefined }); setDone(null); setOpen(false); };
+
+  if (done) return html`<section id="prio-done" role="status" class="rounded-2xl p-4 sm:p-5 flex flex-col gap-2" style=${{ border: "2px solid var(--brass)", background: "rgba(210,173,99,.08)" }}>
+    <strong class="display text-lg leading-snug">🎯 C'est noté : on commence par ${done.matiere}</strong>
+    ${done.message && html`<p class="text-sm">${done.message}</p>`}
+    <ul class="text-sm text-muted flex flex-col gap-0.5">
+      ${done.ech && html`<li>• Échéance ajoutée : <span class="text-txt">${done.ech.title}</span>, ${fmtDay(done.ech.date)}</li>`}
+      <li>• ${plural(done.n, "séance")} ciblée${done.n > 1 ? "s" : ""} ajoutée${done.n > 1 ? "s" : ""} à ton planning</li>
+      ${done.moved > 0 && html`<li>• ${plural(done.moved, "tâche")} d'autres matières décalée${done.moved > 1 ? "s" : ""} après l'échéance</li>`}
+    </ul>
+    <div class="flex gap-2 pt-1">
+      <button type="button" id="prio-ok" onClick=${() => setDone(null)} class="mono text-xs px-3 py-2 rounded-[10px] text-ink font-medium" style=${{ background: "var(--brass)" }}>Parfait</button>
+      <button type="button" id="prio-undo" onClick=${undo} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Annuler ces changements</button>
+    </div>
+  </section>`;
+
+  if (!open) return html`<button type="button" id="prio-open" onClick=${() => setOpen(true)} class="rounded-2xl border border-dashed border-line px-5 py-3.5 text-left hover:border-line2 flex items-center justify-between gap-3">
+    <span class="flex flex-col">
+      <span class="text-sm font-medium">🎯 ${focus ? `Priorité en cours : ${focus.matiere}, jusqu'au ${fmtDay(focus.until)}` : "Tu veux commencer par autre chose ?"}</span>
+      <span class="text-xs text-muted">${focus ? "Changer de priorité ou l'arrêter" : "Dis au mentor ce qui presse (un contrôle, une matière en retard…) et il réorganise ton planning."}</span>
+    </span><span class="text-muted">→</span></button>`;
+
+  return html`<section class="rounded-2xl border border-line bg-panel p-4 sm:p-5 flex flex-col gap-3">
+    <div class="flex items-start justify-between gap-3">
+      <div class="flex flex-col gap-0.5"><h2 class="display text-lg">Par quoi veux-tu commencer ?</h2>
+        <p class="text-xs text-muted">Explique avec tes mots. Le mentor ajoute tes séances, et décale ce qui peut attendre.</p></div>
+      <button type="button" onClick=${() => setOpen(false)} aria-label="Fermer" class="text-muted hover:text-txt text-lg leading-none">×</button>
+    </div>
+    <textarea id="prio-text" rows="3" value=${text} onInput=${(e) => setText(e.target.value)} maxlength="400"
+      placeholder="Ex. : j'ai un contrôle de connaissances en droit administratif la semaine prochaine, je veux commencer par ça."
+      class="w-full bg-panel2 border border-line rounded-xl px-3 py-2.5 text-sm outline-none focus:border-line2 resize-y"></textarea>
+    ${mats.length > 0 && html`<div class="flex flex-wrap gap-1.5">${mats.map((m) => html`<button type="button" key=${m} onClick=${() => setMatiere(matiere === m ? "" : m)}
+      class="mono text-[11px] px-2.5 py-1.5 rounded-lg border" style=${matiere === m ? { borderColor: "var(--brass)", color: "var(--brass)" } : { borderColor: "var(--line)", color: "var(--muted)" }}>${m}</button>`)}</div>`}
+    <label class="flex items-center gap-2 text-xs text-muted">Date de l'échéance (facultatif)
+      <input id="prio-date" type="date" min=${TODAY} value=${date} onInput=${(e) => setDate(e.target.value)} class="bg-panel2 border border-line rounded-lg px-2 py-1 text-txt" /></label>
+    ${err && html`<p class="text-xs" style=${{ color: "var(--red)" }}>${err}</p>`}
+    <div class="flex flex-wrap gap-2">
+      <button type="button" id="prio-go" onClick=${submit} disabled=${busy} class="mono text-xs px-4 py-2.5 rounded-[10px] text-ink font-medium hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2" style=${{ background: "var(--brass)" }}>
+        ${busy && html`<${Spinner} />`} ${busy ? "Le mentor réorganise…" : "Réorganiser mon planning"}</button>
+      ${focus && html`<button type="button" onClick=${stopFocus} class="mono text-xs px-3 py-2 rounded-[10px] border border-line text-muted hover:text-txt">Arrêter la priorité ${focus.matiere}</button>`}
+    </div>
+  </section>`;
+}
+
 function Pilotage({ items, setItems, sample, setPage, mentor, streak }) {
   const [selected, setSelected] = useState(TODAY);
   const [planning, setPlanning] = useState(false);
@@ -663,6 +771,7 @@ Réponds uniquement avec un tableau JSON : [{"date":"YYYY-MM-DD","titre":"séanc
 
   return html`<div class="flex flex-col gap-6">
     <${MentorMessage} items=${items} mentor=${mentor} streak=${streak} onDone=${done} onPlan=${plan} onGo=${(g) => setPage(g || "cours")} planning=${planning} />
+    <${PriorityBox} items=${items} setItems=${setItems} sample=${sample} />
     <${DailyQuestion} />
     ${error && html`<div class="rounded-xl p-4 border border-red/30 bg-red-soft text-red text-sm">${error}</div>`}
     <${Tracker} items=${items} selected=${selected} setSelected=${setSelected} />
